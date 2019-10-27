@@ -33,22 +33,24 @@ add_path(lib_path)
 
 from pytorch_models import *
 
+# python AutoMix.py --method=baseline --arch=resnet18 --dataset=IMAGENET --data_dir=/media/reborn/Others2/ImageNet --batch_size=32 --lr=0.01 --gpu=0,1 --num_workers=8 --parallel=True
 def parse_args():
 	"""Parse input arguments."""
-	parser = argparse.ArgumentParser(description='AutoMix training')
-	parser.add_argument('--batch_size', dest='batch_size', default=25, type=int)
-	parser.add_argument('--gpu', dest='gpu', default="5", type=str)
-	parser.add_argument('--num_workers', dest='num_workers', default=8, type=int)
-	parser.add_argument('--lr', dest='lr', default=0.05, type=float)
-	parser.add_argument('--momentum', dest='momentum', default=0.9, type=float)
-	parser.add_argument('--weight_decay', dest='weight_decay', default=5e-4, type=float)
-	parser.add_argument('--parallel', dest='parallel', default=False, type=bool)
+	parser = argparse.ArgumentParser(description='AutoMix: Mixup Networks for Sample Interpolation via Cooperative Barycenter Learning')
+	parser.add_argument('--method', dest='method', default='baseline', type=str, choices=['baseline', 'bc', 'mixup', 'automix', 'adamixup'], help='Method : [baseline, bc, mixup, automix, adamixup]')
+	parser.add_argument('--arch', dest='arch', default='resnet18', type=str, choices=['mynet', 'resnet18'], help='Backbone architecture : [mynet, resnet18]')
+	parser.add_argument('--dataset', dest='dataset', default='IMAGENET', type=str, choices=['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML'], help='Dataset to be trained : [IMAGENET, CIFAR10, CIFAR100, MNIST, FASHION-MNIST, GTSRB, MIML]')
+	parser.add_argument('--data_dir', dest='data_dir', default=None, type=str, help='Path to the dataset')
+	parser.add_argument('--batch_size', dest='batch_size', default=25, type=int, help='Batch_size for training')
+	parser.add_argument('--gpu', dest='gpu', default="5", type=str, help='GPU lists can be used')
+	parser.add_argument('--lr', dest='lr', default=0.05, type=float, help='Learning rate')
+	parser.add_argument('--num_workers', dest='num_workers', default=8, type=int, help='Num of multiple threads')
+	parser.add_argument('--momentum', dest='momentum', default=0.9, type=float, help='Momentum for optimizer')
+	parser.add_argument('--weight_decay', dest='weight_decay', default=5e-4, type=float, help='Weight_decay for optimizer')
+	parser.add_argument('--parallel', dest='parallel', default=False, type=bool, help='Train parallelly with multi-GPUs?')
 
 	args = parser.parse_args()
 	return args
-
-args = parse_args()
-print(args)
 
 class myLoss(nn.Module):
 	def __init__(self, mtype='baseline'):
@@ -142,7 +144,7 @@ class ZeroMean(object):
 	def __repr__(self):
 		return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
 
-def get_dataset(dataType, methodType):
+def get_dataset(dataType, methodType, dataPath):
 	if(dataType == 'IMAGENET'):
 		shape = (3, 224, 224)
 		lrDecayStep = [50, 75]
@@ -166,9 +168,8 @@ def get_dataset(dataType, methodType):
 			normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 		])
 
-		imageNetPath = '/media/reborn/Others2/ImageNet'
-		traindir = os.path.join(imageNetPath, 'train')
-		valdir = os.path.join(imageNetPath, 'val')
+		traindir = os.path.join(dataPath, 'train')
+		valdir = os.path.join(dataPath, 'val')
 
 		oriTrainDataset = datasets.ImageFolder(traindir)
 		classes = list(oriTrainDataset.class_to_idx.keys())
@@ -207,14 +208,14 @@ def get_dataset(dataType, methodType):
 			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
 		])
 
-		oriTrainDataset = datasets.CIFAR10(root='Dataset/CIFAR10', 
+		oriTrainDataset = datasets.CIFAR10(root=dataPath, 
 												train=True, download=True, transform=transform_train)
 		images = oriTrainDataset.data
 		labels = torch.Tensor(oriTrainDataset.targets).long()
 		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
 		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=1)
 
-		oriTestDataset = datasets.CIFAR10(root='Dataset/CIFAR10', 
+		oriTestDataset = datasets.CIFAR10(root=dataPath, 
 											   train=False, download=False, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = torch.Tensor(oriTestDataset.targets).long()
@@ -243,14 +244,14 @@ def get_dataset(dataType, methodType):
 			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
 		])
 
-		oriTrainDataset = datasets.CIFAR100(root='Dataset/CIFAR100', 
+		oriTrainDataset = datasets.CIFAR100(root=dataPath, 
 												train=True, download=True, transform=transform_train)
 		images = oriTrainDataset.data
 		labels = torch.Tensor(oriTrainDataset.targets).long()
 		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
 		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=1)
 
-		oriTestDataset = datasets.CIFAR100(root='Dataset/CIFAR100', 
+		oriTestDataset = datasets.CIFAR100(root=dataPath, 
 											   train=False, download=False, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = torch.Tensor(oriTestDataset.targets).long()
@@ -277,14 +278,14 @@ def get_dataset(dataType, methodType):
 			normalize(mean=[0.3352, 0.3173, 0.3584], std=[0.2662, 0.2563, 0.2727]),
 		])
 
-		with open('Dataset/GTSRB/39209-all/images.pkl', 'rb') as f:
+		with open('{}/39209-all/images.pkl'.format(dataPath), 'rb') as f:
 			images = torch.from_numpy(pickle.load(f)).float()
-		with open('Dataset/GTSRB/39209-all/labels.pkl', 'rb') as f:
+		with open('{}/39209-all/labels.pkl'.format(dataPath), 'rb') as f:
 			labels = torch.from_numpy(pickle.load(f))
 			labels = torch.argmax(labels, 1)
-		with open('Dataset/GTSRB/39209-all/testImages.pkl', 'rb') as f:
+		with open('{}/39209-all/testImages.pkl'.format(dataPath), 'rb') as f:
 			testImages = torch.from_numpy(pickle.load(f)).float()
-		with open('Dataset/GTSRB/39209-all/testLabels.pkl', 'rb') as f:
+		with open('{}/39209-all/testLabels.pkl'.format(dataPath), 'rb') as f:
 			testLabels = torch.from_numpy(pickle.load(f))
 			testLabels = torch.argmax(testLabels, 1)
 		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
@@ -313,14 +314,14 @@ def get_dataset(dataType, methodType):
 			normalize(mean=[0.1307,], std=[0.3081,]),
 		])
 
-		oriTrainDataset = datasets.MNIST('Dataset/MNIST', 
+		oriTrainDataset = datasets.MNIST(dataPath, 
 									  train=True, download=False, transform=transform_train)
 		images = oriTrainDataset.data
 		labels = oriTrainDataset.targets
 		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
 		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=1)
 
-		oriTestDataset = datasets.MNIST('Dataset/MNIST', 
+		oriTestDataset = datasets.MNIST(dataPath, 
 									 train=False, download=False, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = oriTestDataset.targets
@@ -348,14 +349,14 @@ def get_dataset(dataType, methodType):
 			normalize(mean=[0.2860,], std=[0.3530,]),
 		])
 
-		oriTrainDataset = datasets.FashionMNIST('Dataset/Fashion-MNIST', 
+		oriTrainDataset = datasets.FashionMNIST(dataPath, 
 									  train=True, download=True, transform=transform_train)
 		images = oriTrainDataset.data
 		labels = oriTrainDataset.targets
 		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
 		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=1)
 
-		oriTestDataset = datasets.FashionMNIST('Dataset/Fashion-MNIST', 
+		oriTestDataset = datasets.FashionMNIST(dataPath, 
 									 train=False, download=False, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = oriTestDataset.targets
@@ -418,7 +419,7 @@ def get_roc_data(y_true, y_score, n_classes, rocType='micro'):
 def ROC_plot(sorted_ROC):
 	lw=2
 	plt.figure(figsize=(10, 10)) 
-	title = "{} AUC : ".format(dataName[dataIndex])
+	title = "{} AUC : ".format(dataset)
 	for i, ROC in enumerate(sorted_ROC):
 		if(i == len(sorted_ROC) - 1):
 			title += "{}".format(ROC[0])
@@ -433,7 +434,7 @@ def ROC_plot(sorted_ROC):
 	plt.ylabel('True Positive Rate') 
 	plt.title(title) 
 	plt.legend(loc="lower right") 
-#     plt.savefig("{}/{}-{}{}-ROC.jpg".format(path, dataName[dataIndex], num_examples, suffix))
+#     plt.savefig("{}/{}-{}{}-ROC.jpg".format(path, dataset, num_examples, suffix))
 	plt.show()
 
 def distribution(labels, type='normal'):
@@ -664,14 +665,14 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 				inputs, labels = data
 				inputs = inputs.to(device)
 				labels = labels.to(device)
-				if(methodList[methodIndex] == 'mixup' and phase == 'train'):
+				if(method == 'mixup' and phase == 'train'):
 					inputs, labels_a, labels_b, lam = mixup_data(inputs, labels)
-				elif(methodList[methodIndex] in ['automix', 'adamixup'] and phase == 'train'):
+				elif(method in ['automix', 'adamixup'] and phase == 'train'):
 					inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
 					
 				optimizer.zero_grad()
 				with torch.set_grad_enabled(phase == 'train'):
-					if(methodList[methodIndex] == 'adamixup' and phase == 'train'):
+					if(method == 'adamixup' and phase == 'train'):
 						midIdx = int(len(inputs_a) / 2)
 						inputs_unseen = torch.cat([inputs_a[midIdx:]], 0)
 						labels_unseen = torch.cat([labels_a[midIdx:]], 0)
@@ -694,7 +695,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						x_all = torch.cat([x_mix, inputs_a, inputs_b], 0)
 						y_all = torch.cat([y_mix, labels_a, labels_b], 0)
 						inputs, labels = shuffle(x_all, y_all)
-					elif(methodList[methodIndex] == 'automix' and phase == 'train'):
+					elif(method == 'automix' and phase == 'train'):
 						midIdx = int(len(inputs_a) / 2)
 						inputs_unseen = torch.cat([inputs_a[midIdx:]], 0)
 						labels_unseen = torch.cat([labels_a[midIdx:]], 0)
@@ -722,19 +723,19 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 							plt.show()
 					outputs = net(inputs)
 					preds = torch.argmax(outputs, 1)
-					if(methodList[methodIndex] in ['mixup'] and phase == 'train'):
+					if(method in ['mixup'] and phase == 'train'):
 						clsLoss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
 					else:
 						clsLoss = criterion(outputs, labels)
 #                         clsLoss = criterion(outputs, torch.argmax(labels, 1))
-					if(methodList[methodIndex] == 'automix' and phase == 'train'):
+					if(method == 'automix' and phase == 'train'):
 						d1 = norm1(inputs_a, x_mix)
 						d2 = norm1(inputs_b, x_mix)
 #                         disLoss = lam[:int(lam.shape[0]/3)] * d1 + (1 - lam[:int(lam.shape[0]/3)]) * d2
 						disLoss = lam * d1 + (1 - lam) * d2
 #                         disLoss = d1 + d2
 						loss = clsLoss.mean() + 1.5 * disLoss.mean()
-					elif(methodList[methodIndex] == 'adamixup' and phase == 'train'):
+					elif(method == 'adamixup' and phase == 'train'):
 						x_pos = torch.cat([inputs_unseen, inputs_a, inputs_b], 0)
 						y_pos = torch.zeros(len(x_pos), 2).scatter_(1, torch.ones(len(x_pos), 1).long(), 1).to(device)
 						x_neg = torch.cat([x_mix], 0)
@@ -755,7 +756,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						optimizer.step()
 
 				running_loss.append(loss.cpu().item())
-				if(methodList[methodIndex] in ['mixup'] and phase == 'train'):
+				if(method in ['mixup'] and phase == 'train'):
 					num_correct = (lam.cpu().item() * preds.eq(torch.argmax(labels_a, 1)).cpu().sum().float().item() + (1 - lam.cpu().item()) * preds.eq(torch.argmax(labels_b, 1)).cpu().sum().float().item())
 				else:
 					num_correct = preds.eq(torch.argmax(labels, 1)).cpu().sum().float().item()
@@ -783,9 +784,9 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 			if(phase == 'val' and epoch_acc > best_acc):
 				print('Saving best model to {}'.format(os.path.join(modelPath, modelName)))
-				if(methodList[methodIndex] == 'automix'):
+				if(method == 'automix'):
 					state = {'net': [net, unet], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
-				elif(methodList[methodIndex] == 'adamixup'):
+				elif(method == 'adamixup'):
 					state = {'net': [net, PRG_net], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
 				else:
 					state = {'net': net, 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
@@ -796,9 +797,9 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 			if(phase == 'val' and epoch == n_epochs - 1):
 				finalModelName = 'final-{}'.format(modelName)
 				print('Saving final model to {}'.format(os.path.join(modelPath, finalModelName)))
-				if(methodList[methodIndex] == 'automix'):
+				if(method == 'automix'):
 					state = {'net': [net, unet], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
-				elif(methodList[methodIndex] == 'adamixup'):
+				elif(method == 'adamixup'):
 					state = {'net': [net, PRG_net], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
 				else:
 					state = {'net': net, 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
@@ -811,16 +812,16 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 	print('Best val Acc: {:4f}'.format(best_acc))
 
 	log = dict({'acc': accLog, 'loss': lossLog})
-	with open(os.path.join(modelPath, '{}-log-{}.pkl'.format(methodList[methodIndex], fold+1)), 'wb') as f:
+	with open(os.path.join(modelPath, '{}-log-{}.pkl'.format(method, fold+1)), 'wb') as f:
 		pickle.dump(log, f)
 
 	return best_acc, log
 
 def get_model(netType, methodType, num_classes, shape):
-	if(netType == 'MyNet'):
+	if(netType == 'mynet'):
 		net = MyNet(input_shape=shape, 
 					num_classes=num_classes)
-	elif(netType == 'ResNet18'):
+	elif(netType == 'resnet18'):
 		net = ResNet18(input_shape=shape, 
 					   num_classes=num_classes)
 	if(methodType == 'adamixup'):
@@ -830,11 +831,6 @@ def get_model(netType, methodType, num_classes, shape):
 	parameters = [{'params': net.parameters()}]
 #     summary(model=net, input_size=shape)
 
-	if(device.type == 'cuda'):
-		print('DataParallel : {}'.format(args.parallel))
-		if(args.parallel):
-			net = torch.nn.DataParallel(net)
-		cudnn.benchmark = True
 	if(methodType == 'automix'):
 		unet = UNet(input_shape=(shape[0], shape[1], shape[2]), output_shape=shape, num_classes=num_classes)
 		unet = unet.to(device)
@@ -846,47 +842,71 @@ def get_model(netType, methodType, num_classes, shape):
 		outputNet.append(PRG_net)
 		parameters.append({'params': PRG_net.parameters()})
 #         summary(model=PRG_net, input_size=shape)
-	
+
+	if(device.type == 'cuda'):
+		cudnn.benchmark = True
+		if(args.parallel):
+			print('DataParallel : {}'.format(args.parallel))
+			for i in range(len(outputNet)):
+				outputNet[i] = torch.nn.DataParallel(outputNet[i])
+
 	return outputNet, parameters
 
 if(__name__ == '__main__'):
 	# torch.autograd.set_detect_anomaly(True)
 
+	args = parse_args()
 	if(len(args.gpu) > 0):
 		os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 	print('torch.cuda.is_available : {}'.format(torch.cuda.is_available()))
+	print('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
 	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+	method = str(args.method).lower()
+	arch = str(args.arch).lower()
+	dataset = str(args.dataset).upper()
 	train_batch_size = int(args.batch_size)
 	test_batch_size = 10
 	num_workers = int(args.num_workers)
 	learning_rate = float(args.lr)
 	momentum = float(args.momentum)
 	weight_decay = float(args.weight_decay)
+	if(not args.data_dir):
+		dataPathDict = {
+				'IMAGENET'		: '/media/reborn/Others2/ImageNet',
+				'CIFAR10'		: 'Dataset/cifar10',
+				'CIFAR100'		: 'Dataset/cifar100',
+				'MNIST'			: 'Dataset/mnist',
+				'FASHION-MNIST'	: 'Dataset/fashion-mnist',
+				'GTSRB'			: 'Dataset/GTSRB',
+				}
+		args.data_dir = dataPathDict[dataset]
+		data_dir = str(args.data_dir)
+	print(args)
 	
-	netList = ['MyNet', 'ResNet18']
-	netIndex = 1
-	dataName = ['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML']
-	dataIndex = 0
-	methodList = ['baseline', 'bc', 'mixup', 'automix', 'adamixup']
-	methodIndex = 0
-	print(netList[netIndex], dataName[dataIndex], methodList[methodIndex])
+	# netList = ['mynet', 'resnet18']
+	# netIndex = 1
+	# dataName = ['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML']
+	# dataIndex = 0
+	# methodList = ['baseline', 'bc', 'mixup', 'automix', 'adamixup']
+	# methodIndex = 0
+	# print(arch, dataset, method)
 
-	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, lrDecayStep, n_epochs = get_dataset(dataName[dataIndex], methodList[methodIndex])
-	print('Dataset [{}] loaded!'.format(dataName[dataIndex]))
+	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, lrDecayStep, n_epochs = get_dataset(dataset, method, data_dir)
+	print('Dataset [{}] loaded!'.format(dataset))
 	
-	modelPath = 'pytorch_model_learnt/{}/{}/{}'.format(dataName[dataIndex], netList[netIndex], methodList[methodIndex])
+	modelPath = 'pytorch_model_learnt/{}/{}/{}'.format(dataset, arch, method)
 	for fold in tqdm(range(1), desc='Fold'):
-		modelName = '{}-{}.ckpt'.format(methodList[methodIndex], fold+1)
-		nets, parameters = get_model(netList[netIndex], methodList[methodIndex], num_classes, shape)
-		if(methodList[methodIndex] == 'automix'):
+		modelName = '{}-{}.ckpt'.format(method, fold+1)
+		nets, parameters = get_model(arch, method, num_classes, shape)
+		if(method == 'automix'):
 			net, unet = nets
-		elif(methodList[methodIndex] == 'adamixup'):
+		elif(method == 'adamixup'):
 			net, PRG_net = nets
 		else:
 			net = nets[0]
 
-		criterion = myLoss(methodList[methodIndex]).to(device)
+		criterion = myLoss(method).to(device)
 	#     criterion = nn.CrossEntropyLoss().to(device)
 		optimizer = optim.SGD(parameters, lr=learning_rate, momentum=momentum, weight_decay=weight_decay)
 	#     optimizer = optim.Adam(parameters, lr=0.0002, betas=(0.5, 0.999))
@@ -899,12 +919,12 @@ if(__name__ == '__main__'):
 								  testDataset, 
 								  testLoader)
 
-		plot_acc_loss(log, 'both', '{}-'.format(methodList[methodIndex]), '-{}'.format(fold+1))
-		plot_acc_loss(log, 'loss', '{}-'.format(methodList[methodIndex]), '-{}'.format(fold+1))
-		plot_acc_loss(log, 'accuracy', '{}-'.format(methodList[methodIndex]), '-{}'.format(fold+1))
-		if(methodList[methodIndex] == 'automix'):
+		plot_acc_loss(log, 'both', '{}-'.format(method), '-{}'.format(fold+1))
+		plot_acc_loss(log, 'loss', '{}-'.format(method), '-{}'.format(fold+1))
+		plot_acc_loss(log, 'accuracy', '{}-'.format(method), '-{}'.format(fold+1))
+		if(method == 'automix'):
 			net, unet = torch.load(os.path.join(modelPath, modelName))['net']
-		elif(methodList[methodIndex] == 'adamixup'):
+		elif(method == 'adamixup'):
 			net, PRG_net = torch.load(os.path.join(modelPath, modelName))['net']
 		else:
 			net = torch.load(os.path.join(modelPath, modelName))['net']
