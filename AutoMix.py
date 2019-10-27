@@ -24,6 +24,8 @@ import sys
 import os
 import ot
 import cv2
+import datetime
+import logging
 
 def add_path(path):
 	if path not in sys.path:
@@ -33,7 +35,7 @@ add_path(lib_path)
 
 from pytorch_models import *
 
-# python AutoMix.py --method=baseline --arch=resnet18 --dataset=IMAGENET --data_dir=/media/reborn/Others2/ImageNet --batch_size=32 --lr=0.01 --gpu=0,1 --num_workers=8 --parallel=True
+# python AutoMix.py --method=baseline --arch=resnet18 --dataset=IMAGENET --data_dir=/media/reborn/Others2/ImageNet --batch_size=32 --lr=0.01 --gpu=0,1 --num_workers=8 --parallel=True --log_path=./automix.log
 def parse_args():
 	"""Parse input arguments."""
 	parser = argparse.ArgumentParser(description='AutoMix: Mixup Networks for Sample Interpolation via Cooperative Barycenter Learning')
@@ -48,6 +50,7 @@ def parse_args():
 	parser.add_argument('--momentum', dest='momentum', default=0.9, type=float, help='Momentum for optimizer')
 	parser.add_argument('--weight_decay', dest='weight_decay', default=5e-4, type=float, help='Weight_decay for optimizer')
 	parser.add_argument('--parallel', dest='parallel', default=False, type=bool, help='Train parallelly with multi-GPUs?')
+	parser.add_argument('--log_path', dest='log_path', default=os.path.join(os.getcwd(),'{}.log'.format(datetime.datetime.now().strftime('%Y-%m-%d|%H:%M:%S'))), type=str, help='Path to the dataset')
 
 	args = parser.parse_args()
 	return args
@@ -80,7 +83,6 @@ class myDataset(Dataset):
 		self.mtype = mtype.lower()
 		self.dtype = dtype.lower()
 		self.onehot = onehot
-#         print(self.mtype)
 		
 	def to_onehot(self, label):
 		label = torch.unsqueeze(torch.unsqueeze(label, 0), 1)
@@ -446,6 +448,7 @@ def distribution(labels, type='normal'):
 	for i in set(ll):
 		result[i] = ll.tolist().count(i)
 	print("Label distribution: {}".format(result))
+	logger.info("Label distribution: {}".format(result))
 
 def cal_mean_std(dataset):
 	dataLoader = DataLoader(dataset, batch_size=dataset.__len__(), shuffle=True, num_workers=1)
@@ -472,8 +475,8 @@ def eval_total(net, dataLoader):
 
 	accTotal = 100 * correct / total
 	duration = time.time() - start
-	print('Accuracy of the network on the 10000 test images: {:.2f}% ({:.0f}mins {:.2f}s)'
-		  .format(accTotal, duration // 60, duration % 60))
+	print('Accuracy of the network on the 10000 test images: {:.2f}% ({:.0f}mins {:.2f}s)'.format(accTotal, duration // 60, duration % 60))
+	logger.info('Accuracy of the network on the 10000 test images: {:.2f}% ({:.0f}mins {:.2f}s)'.format(accTotal, duration // 60, duration % 60))
 	return accTotal
 
 def eval_per_class(net, dataLoader, classes):
@@ -494,14 +497,18 @@ def eval_per_class(net, dataLoader, classes):
 				class_correct[label] += c[i].item()
 				class_total[label] += 1
 	print('class_correct\t:\t{}'.format(class_correct))
+	logger.info('class_correct\t:\t{}'.format(class_correct))
 	print('class_total\t:\t{}'.format(class_total))
+	logger.info('class_total\t:\t{}'.format(class_total))
 	accPerClass = dict()
 	for i in range(num_classes):
 		accPerClass[classes[i]] = 0 if class_correct[i] == 0 else '{:.2f}%'.format(100 * class_correct[i] / class_total[i])
 	duration = time.time() - start
 	print('Per class accuracy :')
+	logger.info('Per class accuracy :')
 	pprint.pprint(accPerClass)
 	print('Duration for accPerClass : {:.0f}mins {:.2f}s'.format(duration // 60, duration % 60))
+	logger.info('Duration for accPerClass : {:.0f}mins {:.2f}s'.format(duration // 60, duration % 60))
 	return accPerClass
 
 def plot_acc_loss(log, type, prefix='', suffix=''):
@@ -644,13 +651,18 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 	batchSize = {'train': train_batch_size, 'val': test_batch_size}
 	iterNum = {x: np.ceil(dataSize[x] / batchSize[x]).astype('int32') for x in ['train', 'val']}
 	print('dataSize: {}'.format(dataSize))
+	logger.info('dataSize: {}'.format(dataSize))
 	print('batchSize: {}'.format(batchSize))
+	logger.info('batchSize: {}'.format(batchSize))
 	print('iterNum: {}'.format(iterNum))
+	logger.info('iterNum: {}'.format(iterNum))
 	best_acc = 0.0
 	start = time.time()
 	for epoch in tqdm(range(n_epochs), desc='Epoch'):  # loop over the dataset multiple times
 		print('Epoch {}/{} lr = {}'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr']))
+		logger.info('Epoch {}/{} lr = {}'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr']))
 		print('-' * 10)
+		logger.info('-' * 10)
 		epochStart = time.time()
 		for phase in ['train', 'val']:
 			if(phase == 'train'):
@@ -686,7 +698,6 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						alpha, alpha2, _ = torch.split(gate, [1, 1, 1], 1)
 						uni = torch.rand([len(inputs_a), 1]).to(device)
 						weight = alpha + uni * alpha2
-#                         print(weight[:5])
 						
 						x_weight = weight.view(len(inputs_a), 1, 1, 1)
 						y_weight = weight.view(len(inputs_a), 1)
@@ -779,11 +790,12 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 			epochStart = time.time()
 			sys.stdout.write('                                                                                                  \r')
 			sys.stdout.flush()
-			print('[ {} ] Loss: {:.4f} Acc: {:.2f}% ({:.0f}mins {:.2f}s)'
-				  .format(phase, epoch_loss, 100 * epoch_acc, epochDuration // 60, epochDuration % 60))
+			print('[ {} ] Loss: {:.4f} Acc: {:.2f}% ({:.0f}mins {:.2f}s)'.format(phase, epoch_loss, 100 * epoch_acc, epochDuration // 60, epochDuration % 60))
+			logger.info('[ {} ] Loss: {:.4f} Acc: {:.2f}% ({:.0f}mins {:.2f}s)'.format(phase, epoch_loss, 100 * epoch_acc, epochDuration // 60, epochDuration % 60))
 
 			if(phase == 'val' and epoch_acc > best_acc):
 				print('Saving best model to {}'.format(os.path.join(modelPath, modelName)))
+				logger.info('Saving best model to {}'.format(os.path.join(modelPath, modelName)))
 				if(method == 'automix'):
 					state = {'net': [net, unet], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
 				elif(method == 'adamixup'):
@@ -797,6 +809,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 			if(phase == 'val' and epoch == n_epochs - 1):
 				finalModelName = 'final-{}'.format(modelName)
 				print('Saving final model to {}'.format(os.path.join(modelPath, finalModelName)))
+				logger.info('Saving final model to {}'.format(os.path.join(modelPath, finalModelName)))
 				if(method == 'automix'):
 					state = {'net': [net, unet], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
 				elif(method == 'adamixup'):
@@ -807,9 +820,12 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 					os.makedirs(modelPath)
 				torch.save(state, os.path.join(modelPath, finalModelName))
 		print()
+		logger.info()
 	duration = time.time() - start
 	print('Training complete in {:.0f}h {:.0f}m {:.2f}s'.format(duration // 3600, (duration % 3600) // 60, duration % 60))
+	logger.info('Training complete in {:.0f}h {:.0f}m {:.2f}s'.format(duration // 3600, (duration % 3600) // 60, duration % 60))
 	print('Best val Acc: {:4f}'.format(best_acc))
+	logger.info('Best val Acc: {:4f}'.format(best_acc))
 
 	log = dict({'acc': accLog, 'loss': lossLog})
 	with open(os.path.join(modelPath, '{}-log-{}.pkl'.format(method, fold+1)), 'wb') as f:
@@ -847,20 +863,28 @@ def get_model(netType, methodType, num_classes, shape):
 		cudnn.benchmark = True
 		if(args.parallel):
 			print('DataParallel : {}'.format(args.parallel))
+			logger.info('DataParallel : {}'.format(args.parallel))
 			for i in range(len(outputNet)):
 				outputNet[i] = torch.nn.DataParallel(outputNet[i])
 
 	return outputNet, parameters
 
+def get_logging(log_path):
+	logging.basicConfig(
+		level=logging.DEBUG,
+		format='%(asctime)s %(filename)s [line:%(lineno)d] %(levelname)s\t%(message)s',
+		datefmt='%Y-%m-%d %H:%M:%S',
+		filename=log_path,
+		filemode='w')
+	# console = logging.StreamHandler()
+	logger = logging.getLogger(__name__)
+
+	return logger
+
 if(__name__ == '__main__'):
 	# torch.autograd.set_detect_anomaly(True)
 
 	args = parse_args()
-	if(len(args.gpu) > 0):
-		os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-	print('torch.cuda.is_available : {}'.format(torch.cuda.is_available()))
-	print('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
-	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 	method = str(args.method).lower()
 	arch = str(args.arch).lower()
@@ -871,6 +895,7 @@ if(__name__ == '__main__'):
 	learning_rate = float(args.lr)
 	momentum = float(args.momentum)
 	weight_decay = float(args.weight_decay)
+	log_path = str(args.log_path)
 	if(not args.data_dir):
 		dataPathDict = {
 				'IMAGENET'		: '/media/reborn/Others2/ImageNet',
@@ -881,9 +906,20 @@ if(__name__ == '__main__'):
 				'GTSRB'			: 'Dataset/GTSRB',
 				}
 		args.data_dir = dataPathDict[dataset]
-		data_dir = str(args.data_dir)
+	data_dir = str(args.data_dir)
+	logger = get_logging(log_path)
+
 	print(args)
+	logger.info(args)
 	
+	if(len(args.gpu) > 0):
+		os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+	print('torch.cuda.is_available : {}'.format(torch.cuda.is_available()))
+	logger.info('torch.cuda.is_available : {}'.format(torch.cuda.is_available()))
+	print('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
+	logger.info('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
+	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 	# netList = ['mynet', 'resnet18']
 	# netIndex = 1
 	# dataName = ['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML']
@@ -894,7 +930,8 @@ if(__name__ == '__main__'):
 
 	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, lrDecayStep, n_epochs = get_dataset(dataset, method, data_dir)
 	print('Dataset [{}] loaded!'.format(dataset))
-	
+	logger.info('Dataset [{}] loaded!'.format(dataset))
+
 	modelPath = 'pytorch_model_learnt/{}/{}/{}'.format(dataset, arch, method)
 	for fold in tqdm(range(1), desc='Fold'):
 		modelName = '{}-{}.ckpt'.format(method, fold+1)

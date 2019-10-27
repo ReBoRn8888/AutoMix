@@ -37,7 +37,7 @@ optional arguments:
 ```
 One can simply run the ```AutoMix.py``` to train ImageNet by
 ```bash
-python AutoMix.py --method=baseline --arch=resnet18 --dataset=IMAGENET --data_dir=/media/reborn/Others2/ImageNet --batch_size=32 --lr=0.01 --gpu=0,1 --num_workers=8 --parallel=True
+python AutoMix.py --method=baseline --arch=resnet18 --dataset=IMAGENET --data_dir=/media/reborn/Others2/ImageNet --batch_size=32 --lr=0.01 --gpu=0,1 --num_workers=8 --parallel=True --log_path=./automix.log
 ```
 
 ## Download the ImageNet dataset
