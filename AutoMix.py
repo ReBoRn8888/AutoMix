@@ -35,7 +35,16 @@ add_path(lib_path)
 
 from pytorch_models import *
 
-# python AutoMix.py --method=baseline --arch=resnet18 --dataset=IMAGENET --data_dir=/media/reborn/Others2/ImageNet --batch_size=32 --lr=0.01 --gpu=0,1 --num_workers=8 --parallel=True --log_path=./automix.log
+# python AutoMix.py --method=baseline \
+# 				  --arch=resnet18  \
+# 				  --dataset=IMAGENET \
+# 				  --data_dir=/media/reborn/Others2/ImageNet \
+# 				  --batch_size=32 \
+# 				  --lr=0.01 \
+# 				  --gpu=0,1 \
+# 				  --num_workers=8 \
+# 				  --parallel=True \
+# 				  --log_path=./automix.log
 def parse_args():
 	"""Parse input arguments."""
 	parser = argparse.ArgumentParser(description='AutoMix: Mixup Networks for Sample Interpolation via Cooperative Barycenter Learning')
@@ -44,7 +53,7 @@ def parse_args():
 	parser.add_argument('--dataset', dest='dataset', default='IMAGENET', type=str, choices=['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML'], help='Dataset to be trained : [IMAGENET, CIFAR10, CIFAR100, MNIST, FASHION-MNIST, GTSRB, MIML]')
 	parser.add_argument('--data_dir', dest='data_dir', default=None, type=str, help='Path to the dataset')
 	parser.add_argument('--batch_size', dest='batch_size', default=25, type=int, help='Batch_size for training')
-	parser.add_argument('--gpu', dest='gpu', default="5", type=str, help='GPU lists can be used')
+	parser.add_argument('--gpu', dest='gpu', default=None, type=str, help='GPU lists can be used')
 	parser.add_argument('--lr', dest='lr', default=0.05, type=float, help='Learning rate')
 	parser.add_argument('--num_workers', dest='num_workers', default=8, type=int, help='Num of multiple threads')
 	parser.add_argument('--momentum', dest='momentum', default=0.9, type=float, help='Momentum for optimizer')
@@ -171,7 +180,7 @@ def get_dataset(dataType, methodType, dataPath):
 		])
 
 		traindir = os.path.join(dataPath, 'train')
-		valdir = os.path.join(dataPath, 'val')
+		valdir = os.path.join(dataPath, 'validation')
 
 		oriTrainDataset = datasets.ImageFolder(traindir)
 		classes = list(oriTrainDataset.class_to_idx.keys())
@@ -914,10 +923,10 @@ if(__name__ == '__main__'):
 	
 	if(len(args.gpu) > 0):
 		os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
+		print('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
+		logger.info('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
 	print('torch.cuda.is_available : {}'.format(torch.cuda.is_available()))
 	logger.info('torch.cuda.is_available : {}'.format(torch.cuda.is_available()))
-	print('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
-	logger.info('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
 	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 	# netList = ['mynet', 'resnet18']
