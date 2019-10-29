@@ -53,7 +53,7 @@ def parse_args():
 	parser.add_argument('--dataset', dest='dataset', default='IMAGENET', type=str, choices=['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML'], help='Dataset to be trained : [IMAGENET, CIFAR10, CIFAR100, MNIST, FASHION-MNIST, GTSRB, MIML]')
 	parser.add_argument('--data_dir', dest='data_dir', default=None, type=str, help='Path to the dataset')
 	parser.add_argument('--batch_size', dest='batch_size', default=25, type=int, help='Batch_size for training')
-	parser.add_argument('--gpu', dest='gpu', default=None, type=str, help='GPU lists can be used')
+	parser.add_argument('--gpu', dest='gpu', default='', type=str, help='GPU lists can be used')
 	parser.add_argument('--lr', dest='lr', default=0.05, type=float, help='Learning rate')
 	parser.add_argument('--num_workers', dest='num_workers', default=8, type=int, help='Num of multiple threads')
 	parser.add_argument('--momentum', dest='momentum', default=0.9, type=float, help='Momentum for optimizer')
