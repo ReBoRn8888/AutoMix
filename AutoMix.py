@@ -22,7 +22,7 @@ import pprint
 import time
 import sys
 import os
-import ot
+# import ot
 import cv2
 import datetime
 import logging
@@ -624,25 +624,25 @@ def KL_divergence(P, Q):
 def JS_divergence(P, Q):
 	return 0.5 * KL_divergence(P, (P + Q) / 2) + 0.5 * KL_divergence(Q, (P + Q) / 2)
 
-def EMD(P, Q):
-	a = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
-	b = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
-	dis = []
-	for i in range(len(P)):
-		M = ot.dist(P[i].view(-1, 1).cpu().detach().numpy(), Q[i].view(-1, 1).cpu().detach().numpy(), 'euclidean')
-		d = ot.emd2(a, b, M)
-		dis.append(d)
-	return torch.Tensor(dis)
+# def EMD(P, Q):
+# 	a = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
+# 	b = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
+# 	dis = []
+# 	for i in range(len(P)):
+# 		M = ot.dist(P[i].view(-1, 1).cpu().detach().numpy(), Q[i].view(-1, 1).cpu().detach().numpy(), 'euclidean')
+# 		d = ot.emd2(a, b, M)
+# 		dis.append(d)
+# 	return torch.Tensor(dis)
 
-def sinkhorn(P, Q):
-	a = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
-	b = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
-	dis = []
-	for i in range(len(P)):
-		M = ot.dist(P[i].view(-1, 1).cpu().detach().numpy(), Q[i].view(-1, 1).cpu().detach().numpy(), 'euclidean')
-		d = ot.sinkhorn2(a, b, M, 1, numItermax=100)
-		dis.append(d)
-	return torch.Tensor(dis)
+# def sinkhorn(P, Q):
+# 	a = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
+# 	b = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
+# 	dis = []
+# 	for i in range(len(P)):
+# 		M = ot.dist(P[i].view(-1, 1).cpu().detach().numpy(), Q[i].view(-1, 1).cpu().detach().numpy(), 'euclidean')
+# 		d = ot.sinkhorn2(a, b, M, 1, numItermax=100)
+# 		dis.append(d)
+# 	return torch.Tensor(dis)
 
 def norm1(P, Q):
 #     P = P.view(P.shape[0], -1)
@@ -829,7 +829,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 					os.makedirs(modelPath)
 				torch.save(state, os.path.join(modelPath, finalModelName))
 		print()
-		logger.info()
+		logger.info('\n')
 	duration = time.time() - start
 	print('Training complete in {:.0f}h {:.0f}m {:.2f}s'.format(duration // 3600, (duration % 3600) // 60, duration % 60))
 	logger.info('Training complete in {:.0f}h {:.0f}m {:.2f}s'.format(duration // 3600, (duration % 3600) // 60, duration % 60))
