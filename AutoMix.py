@@ -35,16 +35,18 @@ add_path(lib_path)
 
 from pytorch_models import *
 
-# python AutoMix.py --method=baseline \
-# 				  --arch=resnet18  \
-# 				  --dataset=IMAGENET \
-# 				  --data_dir=/media/reborn/Others2/ImageNet \
-# 				  --batch_size=32 \
-# 				  --lr=0.01 \
-# 				  --gpu=0,1 \
-# 				  --num_workers=8 \
-# 				  --parallel=True \
-# 				  --log_path=./automix.log
+# python AutoMix.py \
+# --method=baseline \
+# --arch=resnet18  \
+# --dataset=IMAGENET \
+# --data_dir=/media/reborn/Others2/ImageNet \
+# --batch_size=32 \
+# --lr=0.01 \
+# --gpu=0 \
+# --num_workers=8 \
+# --parallel=True \
+# --log_path=./automix.log
+
 def parse_args():
 	"""Parse input arguments."""
 	parser = argparse.ArgumentParser(description='AutoMix: Mixup Networks for Sample Interpolation via Cooperative Barycenter Learning')
@@ -63,6 +65,11 @@ def parse_args():
 
 	args = parser.parse_args()
 	return args
+
+def print_log(print_string, logger, log_type):
+	print("{}".format(print_string))
+	if(log_type == 'info'):
+		logger.info("{}".format(print_string))
 
 class myLoss(nn.Module):
 	def __init__(self, mtype='baseline'):
@@ -456,8 +463,7 @@ def distribution(labels, type='normal'):
 		ll = labels
 	for i in set(ll):
 		result[i] = ll.tolist().count(i)
-	print("Label distribution: {}".format(result))
-	logger.info("Label distribution: {}".format(result))
+	print_log("Label distribution: {}".format(result), logger, 'info')
 
 def cal_mean_std(dataset):
 	dataLoader = DataLoader(dataset, batch_size=dataset.__len__(), shuffle=True, num_workers=1)
@@ -484,8 +490,7 @@ def eval_total(net, dataLoader):
 
 	accTotal = 100 * correct / total
 	duration = time.time() - start
-	print('Accuracy of the network on the 10000 test images: {:.2f}% ({:.0f}mins {:.2f}s)'.format(accTotal, duration // 60, duration % 60))
-	logger.info('Accuracy of the network on the 10000 test images: {:.2f}% ({:.0f}mins {:.2f}s)'.format(accTotal, duration // 60, duration % 60))
+	print_log('Accuracy of the network on the 10000 test images: {:.2f}% ({:.0f}mins {:.2f}s)'.format(accTotal, duration // 60, duration % 60), logger, 'info')
 	return accTotal
 
 def eval_per_class(net, dataLoader, classes):
@@ -505,19 +510,15 @@ def eval_per_class(net, dataLoader, classes):
 				label = torch.argmax(labels[i]).item()
 				class_correct[label] += c[i].item()
 				class_total[label] += 1
-	print('class_correct\t:\t{}'.format(class_correct))
-	logger.info('class_correct\t:\t{}'.format(class_correct))
-	print('class_total\t:\t{}'.format(class_total))
-	logger.info('class_total\t:\t{}'.format(class_total))
+	print_log('class_correct\t:\t{}'.format(class_correct), logger, 'info')
+	print_log('class_total\t:\t{}'.format(class_total), logger, 'info')
 	accPerClass = dict()
 	for i in range(num_classes):
 		accPerClass[classes[i]] = 0 if class_correct[i] == 0 else '{:.2f}%'.format(100 * class_correct[i] / class_total[i])
 	duration = time.time() - start
-	print('Per class accuracy :')
-	logger.info('Per class accuracy :')
-	pprint.pprint(accPerClass)
-	print('Duration for accPerClass : {:.0f}mins {:.2f}s'.format(duration // 60, duration % 60))
-	logger.info('Duration for accPerClass : {:.0f}mins {:.2f}s'.format(duration // 60, duration % 60))
+	print_log('Per class accuracy :', logger, 'info')
+	print_log(accPerClass, logger, 'info')
+	print_log('Duration for accPerClass : {:.0f}mins {:.2f}s'.format(duration // 60, duration % 60), logger, 'info')
 	return accPerClass
 
 def plot_acc_loss(log, type, prefix='', suffix=''):
@@ -659,19 +660,14 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 	dataSize = {x: dataSet[x].__len__() for x in ['train', 'val']}
 	batchSize = {'train': train_batch_size, 'val': test_batch_size}
 	iterNum = {x: np.ceil(dataSize[x] / batchSize[x]).astype('int32') for x in ['train', 'val']}
-	print('dataSize: {}'.format(dataSize))
-	logger.info('dataSize: {}'.format(dataSize))
-	print('batchSize: {}'.format(batchSize))
-	logger.info('batchSize: {}'.format(batchSize))
-	print('iterNum: {}'.format(iterNum))
-	logger.info('iterNum: {}'.format(iterNum))
+	print_log('dataSize: {}'.format(dataSize), logger, 'info')
+	print_log('batchSize: {}'.format(batchSize), logger, 'info')
+	print_log('iterNum: {}'.format(iterNum), logger, 'info')
 	best_acc = 0.0
 	start = time.time()
 	for epoch in tqdm(range(n_epochs), desc='Epoch'):  # loop over the dataset multiple times
-		print('Epoch {}/{} lr = {}'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr']))
-		logger.info('Epoch {}/{} lr = {}'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr']))
-		print('-' * 10)
-		logger.info('-' * 10)
+		print_log('Epoch {}/{} lr = {}'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr']), logger, 'info')
+		print_log('-' * 10, logger, 'info')
 		epochStart = time.time()
 		for phase in ['train', 'val']:
 			if(phase == 'train'):
@@ -799,12 +795,10 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 			epochStart = time.time()
 			sys.stdout.write('                                                                                                  \r')
 			sys.stdout.flush()
-			print('[ {} ] Loss: {:.4f} Acc: {:.2f}% ({:.0f}mins {:.2f}s)'.format(phase, epoch_loss, 100 * epoch_acc, epochDuration // 60, epochDuration % 60))
-			logger.info('[ {} ] Loss: {:.4f} Acc: {:.2f}% ({:.0f}mins {:.2f}s)'.format(phase, epoch_loss, 100 * epoch_acc, epochDuration // 60, epochDuration % 60))
+			print_log('[ {} ] Loss: {:.4f} Acc: {:.2f}% ({}/{}) ({:.0f}mins {:.2f}s)'.format(phase, epoch_loss, 100 * epoch_acc, int(running_corrects), running_cnt, epochDuration // 60, epochDuration % 60), logger, 'info')
 
 			if(phase == 'val' and epoch_acc > best_acc):
-				print('Saving best model to {}'.format(os.path.join(modelPath, modelName)))
-				logger.info('Saving best model to {}'.format(os.path.join(modelPath, modelName)))
+				print_log('Saving best model to {}'.format(os.path.join(modelPath, modelName)), logger, 'info')
 				if(method == 'automix'):
 					state = {'net': [net, unet], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
 				elif(method == 'adamixup'):
@@ -817,8 +811,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 				best_acc = epoch_acc
 			if(phase == 'val' and epoch == n_epochs - 1):
 				finalModelName = 'final-{}'.format(modelName)
-				print('Saving final model to {}'.format(os.path.join(modelPath, finalModelName)))
-				logger.info('Saving final model to {}'.format(os.path.join(modelPath, finalModelName)))
+				print_log('Saving final model to {}'.format(os.path.join(modelPath, finalModelName)), logger, 'info')
 				if(method == 'automix'):
 					state = {'net': [net, unet], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
 				elif(method == 'adamixup'):
@@ -828,13 +821,10 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 				if not os.path.isdir(modelPath):
 					os.makedirs(modelPath)
 				torch.save(state, os.path.join(modelPath, finalModelName))
-		print()
-		logger.info('\n')
+		print_log('\n', logger, 'info')
 	duration = time.time() - start
-	print('Training complete in {:.0f}h {:.0f}m {:.2f}s'.format(duration // 3600, (duration % 3600) // 60, duration % 60))
-	logger.info('Training complete in {:.0f}h {:.0f}m {:.2f}s'.format(duration // 3600, (duration % 3600) // 60, duration % 60))
-	print('Best val Acc: {:4f}'.format(best_acc))
-	logger.info('Best val Acc: {:4f}'.format(best_acc))
+	print_log('Training complete in {:.0f}h {:.0f}m {:.2f}s'.format(duration // 3600, (duration % 3600) // 60, duration % 60), logger, 'info')
+	print_log('Best val Acc: {:4f}'.format(best_acc), logger, 'info')
 
 	log = dict({'acc': accLog, 'loss': lossLog})
 	with open(os.path.join(modelPath, '{}-log-{}.pkl'.format(method, fold+1)), 'wb') as f:
@@ -854,7 +844,7 @@ def get_model(netType, methodType, num_classes, shape):
 	net = net.to(device)
 	outputNet = [net]
 	parameters = [{'params': net.parameters()}]
-#     summary(model=net, input_size=shape)
+	# summary(model=net, input_size=shape)
 
 	if(methodType == 'automix'):
 		unet = UNet(input_shape=(shape[0], shape[1], shape[2]), output_shape=shape, num_classes=num_classes)
@@ -871,8 +861,7 @@ def get_model(netType, methodType, num_classes, shape):
 	if(device.type == 'cuda'):
 		cudnn.benchmark = True
 		if(args.parallel):
-			print('DataParallel : {}'.format(args.parallel))
-			logger.info('DataParallel : {}'.format(args.parallel))
+			print_log('DataParallel : {}'.format(args.parallel), logger, 'info')
 			for i in range(len(outputNet)):
 				outputNet[i] = torch.nn.DataParallel(outputNet[i])
 
@@ -881,7 +870,7 @@ def get_model(netType, methodType, num_classes, shape):
 def get_logging(log_path):
 	logging.basicConfig(
 		level=logging.DEBUG,
-		format='%(asctime)s %(filename)s [line:%(lineno)d] %(levelname)s\t%(message)s',
+		format='%(asctime)s %(filename)s %(levelname)s\t%(message)s',
 		datefmt='%Y-%m-%d %H:%M:%S',
 		filename=log_path,
 		filemode='w')
@@ -918,15 +907,12 @@ if(__name__ == '__main__'):
 	data_dir = str(args.data_dir)
 	logger = get_logging(log_path)
 
-	print(args)
-	logger.info(args)
+	print_log(args, logger, 'info')
 	
 	if(len(args.gpu) > 0):
 		os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
-		print('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
-		logger.info('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]))
-	print('torch.cuda.is_available : {}'.format(torch.cuda.is_available()))
-	logger.info('torch.cuda.is_available : {}'.format(torch.cuda.is_available()))
+		print_log('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]), logger, 'info')
+	print_log('torch.cuda.is_available : {}'.format(torch.cuda.is_available()), logger, 'info')
 	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 	# netList = ['mynet', 'resnet18']
@@ -938,8 +924,7 @@ if(__name__ == '__main__'):
 	# print(arch, dataset, method)
 
 	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, lrDecayStep, n_epochs = get_dataset(dataset, method, data_dir)
-	print('Dataset [{}] loaded!'.format(dataset))
-	logger.info('Dataset [{}] loaded!'.format(dataset))
+	print_log('Dataset [{}] loaded!'.format(dataset), logger, 'info')
 
 	modelPath = 'pytorch_model_learnt/{}/{}/{}'.format(dataset, arch, method)
 	for fold in tqdm(range(1), desc='Fold'):
