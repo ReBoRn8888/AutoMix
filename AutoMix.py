@@ -7,32 +7,24 @@ import torch.backends.cudnn as cudnn
 from torchvision import transforms, datasets, models
 from torch.utils.data import Dataset, TensorDataset, DataLoader
 from torch.optim import lr_scheduler
-from torchsummary import summary
 
 import matplotlib.pyplot as plt
-
 from tqdm import tqdm
-from PIL import Image
-from scipy.io import loadmat
 import numpy as np
 import argparse
 import pickle
-import copy
-import pprint
 import time
 import sys
 import os
 # import ot
 import cv2
 import datetime
-import logging
 
-def add_path(path):
-	if path not in sys.path:
-		sys.path.insert(0, path)
-lib_path = os.path.abspath('pytorch_models')
-add_path(lib_path)
-
+import _init_paths
+from summary import summary
+from distance import *
+from utils import *
+from load_data import *
 from pytorch_models import *
 
 # python AutoMix.py \
@@ -50,10 +42,11 @@ from pytorch_models import *
 def parse_args():
 	"""Parse input arguments."""
 	parser = argparse.ArgumentParser(description='AutoMix: Mixup Networks for Sample Interpolation via Cooperative Barycenter Learning')
-	parser.add_argument('--method', dest='method', default='baseline', type=str, choices=['baseline', 'bc', 'mixup', 'automix', 'adamixup'], help='Method : [baseline, bc, mixup, automix, adamixup]')
+	parser.add_argument('--method', dest='method', default='baseline', type=str, choices=['baseline', 'bc', 'mixup', 'automix', 'adamixup', 'manifoldmixup'], help='Method : [baseline, bc, mixup, automix, adamixup]')
 	parser.add_argument('--arch', dest='arch', default='resnet18', type=str, choices=['mynet', 'resnet18'], help='Backbone architecture : [mynet, resnet18]')
 	parser.add_argument('--dataset', dest='dataset', default='IMAGENET', type=str, choices=['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML'], help='Dataset to be trained : [IMAGENET, CIFAR10, CIFAR100, MNIST, FASHION-MNIST, GTSRB, MIML]')
 	parser.add_argument('--data_dir', dest='data_dir', default=None, type=str, help='Path to the dataset')
+	parser.add_argument('--epoch', dest='epoch', default=None, type=int, help='Training epochs')
 	parser.add_argument('--batch_size', dest='batch_size', default=25, type=int, help='Batch_size for training')
 	parser.add_argument('--gpu', dest='gpu', default='', type=str, help='GPU lists can be used')
 	parser.add_argument('--lr', dest='lr', default=0.05, type=float, help='Learning rate')
@@ -61,15 +54,10 @@ def parse_args():
 	parser.add_argument('--momentum', dest='momentum', default=0.9, type=float, help='Momentum for optimizer')
 	parser.add_argument('--weight_decay', dest='weight_decay', default=5e-4, type=float, help='Weight_decay for optimizer')
 	parser.add_argument('--parallel', dest='parallel', default=False, type=bool, help='Train parallelly with multi-GPUs?')
-	parser.add_argument('--log_path', dest='log_path', default=os.path.join(os.getcwd(),'{}.log'.format(datetime.datetime.now().strftime('%Y-%m-%d|%H:%M:%S'))), type=str, help='Path to the dataset')
+	parser.add_argument('--log_path', dest='log_path', default=None, type=str, help='Path to the dataset')
 
 	args = parser.parse_args()
 	return args
-
-def print_log(print_string, logger, log_type):
-	print("{}".format(print_string))
-	if(log_type == 'info'):
-		logger.info("{}".format(print_string))
 
 class myLoss(nn.Module):
 	def __init__(self, mtype='baseline'):
@@ -89,391 +77,6 @@ class myLoss(nn.Module):
 			loss = -torch.sum((pred+1e-9) * (truth+1e-9), 1)
 		return loss
 
-class myDataset(Dataset):
-	def __init__(self, images, labels, classes=None, transform=None, mtype='baseline', dtype='mnist', onehot=True):
-		self.images = images
-		self.labels = labels
-		self.transform = transform
-		self.classes = classes
-		self.num_classes = len(self.classes)
-		self.mtype = mtype.lower()
-		self.dtype = dtype.lower()
-		self.onehot = onehot
-		
-	def to_onehot(self, label):
-		label = torch.unsqueeze(torch.unsqueeze(label, 0), 1)
-		label = torch.zeros(1, self.num_classes).scatter_(1, label, 1)
-		label = torch.squeeze(label)
-		return label
-		
-	def __len__(self):
-		return len(self.images)
-	
-	def __getitem__(self, index):
-		if(self.mtype == 'bc'):
-			while True:  # Select two training examples
-				id1 = index
-				image1, label1 = self.images[id1], self.labels[id1]
-				id2 = np.random.randint(0, self.__len__() - 1)
-				image2, label2 = self.images[id2], self.labels[id2]
-				if label1 != label2:
-					break
-			if(self.transform):
-				image1 = self.transform(Image.fromarray(np.uint8(image1)))
-				image2 = self.transform(Image.fromarray(np.uint8(image2)))
-			# Mix two images
-			r = torch.rand(1)
-			g1 = torch.std(image1)
-			g2 = torch.std(image2)
-			p = 1.0 / (1 + g1 / g2 * (1 - r) / r)
-			image = ((image1 * p + image2 * (1 - p)) / np.sqrt(p ** 2 + (1 - p) ** 2))
-			
-			# Mix two labels
-			label1 = self.to_onehot(label1)
-			label2 = self.to_onehot(label2)
-			label = (label1 * r + label2 * (1 - r)).float()
-			return image, label
-		else:
-			image, label = self.images[index], self.labels[index]
-			if(self.dtype == 'imagenet'):
-				image = cv2.imread(image[0])
-			if(self.onehot):
-				label = self.to_onehot(label)
-			if(self.transform):
-				image = self.transform(Image.fromarray(np.uint8(image)))
-			return image, label
-
-def zero_mean(tensor, mean, std):
-	if not torchvision.transforms.functional._is_tensor_image(tensor):
-		raise TypeError('tensor is not a torch image.')
-	# TODO: make efficient
-	for t, m, s in zip(tensor, mean, std):
-		t.sub_(m).sub_(torch.mean(t)).div_(s)
-	return tensor
-
-class ZeroMean(object):
-	def __init__(self, mean, std):
-		self.mean = mean
-		self.std = std
-
-	def __call__(self, tensor):
-		return zero_mean(tensor, self.mean, self.std)
-
-	def __repr__(self):
-		return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
-
-def get_dataset(dataType, methodType, dataPath):
-	if(dataType == 'IMAGENET'):
-		shape = (3, 224, 224)
-		lrDecayStep = [50, 75]
-		n_epochs = 90
-		# Data loading code
-		if(methodType == 'bc'):
-			normalize = ZeroMean
-		else:
-			normalize = transforms.Normalize
-		transform_train = transforms.Compose([
-			transforms.RandomResizedCrop(224),
-			transforms.RandomHorizontalFlip(),
-			transforms.ToTensor(),
-			normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-		])
-
-		transform_test = transforms.Compose([
-			transforms.RandomResizedCrop(224),
-			transforms.RandomHorizontalFlip(),
-			transforms.ToTensor(),
-			normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-		])
-
-		traindir = os.path.join(dataPath, 'train')
-		valdir = os.path.join(dataPath, 'validation')
-
-		oriTrainDataset = datasets.ImageFolder(traindir)
-		classes = list(oriTrainDataset.class_to_idx.keys())
-		clsId2clsName = get_imageNet_classId2Name()
-		num_classes = len(classes)
-		images = oriTrainDataset.imgs
-		labels = torch.Tensor(oriTrainDataset.targets).long()
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType, dtype=dataType)
-		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=num_workers, pin_memory=True)
-
-		oriTestDataset = datasets.ImageFolder(valdir)
-		testImages = oriTestDataset.imgs
-		testLabels = torch.Tensor(oriTestDataset.targets).long()
-		testDataset = myDataset(testImages, testLabels, classes, transform_test, mtype=methodType, dtype=dataType)
-		testLoader = DataLoader(testDataset, batch_size=test_batch_size, shuffle=False, num_workers=num_workers, pin_memory=True)
-	elif(dataType == 'CIFAR10'):
-		classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
-		num_classes = len(classes)
-		shape = (3, 32, 32)
-		lrDecayStep = [150, 225]
-		n_epochs = 300
-
-		if(methodType == 'bc'):
-			normalize = ZeroMean
-		else:
-			normalize = transforms.Normalize
-		transform_train = transforms.Compose([
-			transforms.RandomCrop(32, padding=4),
-			transforms.RandomHorizontalFlip(),
-			transforms.ToTensor(),
-			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
-		])
-
-		transform_test = transforms.Compose([
-			transforms.ToTensor(),
-			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
-		])
-
-		oriTrainDataset = datasets.CIFAR10(root=dataPath, 
-												train=True, download=True, transform=transform_train)
-		images = oriTrainDataset.data
-		labels = torch.Tensor(oriTrainDataset.targets).long()
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
-		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=1)
-
-		oriTestDataset = datasets.CIFAR10(root=dataPath, 
-											   train=False, download=False, transform=transform_test)
-		testImages = oriTestDataset.data
-		testLabels = torch.Tensor(oriTestDataset.targets).long()
-		testDataset = myDataset(testImages, testLabels, classes, transform_test)
-		testLoader = DataLoader(testDataset, batch_size=test_batch_size, shuffle=False, num_workers=1)
-	if(dataType == 'CIFAR100'):
-		classes = ['{}'.format(i) for i in range(100)]
-		num_classes = len(classes)
-		shape = (3, 32, 32)
-		lrDecayStep = [150, 225]
-		n_epochs = 300
-
-		if(methodType == 'bc'):
-			normalize = ZeroMean
-		else:
-			normalize = transforms.Normalize
-		transform_train = transforms.Compose([
-			transforms.RandomCrop(32, padding=4),
-			transforms.RandomHorizontalFlip(),
-			transforms.ToTensor(),
-			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
-		])
-
-		transform_test = transforms.Compose([
-			transforms.ToTensor(),
-			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
-		])
-
-		oriTrainDataset = datasets.CIFAR100(root=dataPath, 
-												train=True, download=True, transform=transform_train)
-		images = oriTrainDataset.data
-		labels = torch.Tensor(oriTrainDataset.targets).long()
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
-		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=1)
-
-		oriTestDataset = datasets.CIFAR100(root=dataPath, 
-											   train=False, download=False, transform=transform_test)
-		testImages = oriTestDataset.data
-		testLabels = torch.Tensor(oriTestDataset.targets).long()
-		testDataset = myDataset(testImages, testLabels, classes, transform_test)
-		testLoader = DataLoader(testDataset, batch_size=test_batch_size, shuffle=False, num_workers=1)
-	elif(dataType == 'GTSRB'):
-		classes = ['{}'.format(i) for i in range(43)]
-		num_classes = len(classes)
-		shape = (3, 28, 28)
-		lrDecayStep = [50, 75]
-		n_epochs = 100
-
-		if(methodType == 'bc'):
-			normalize = ZeroMean
-		else:
-			normalize = transforms.Normalize
-		transform_train = transforms.Compose([
-			transforms.RandomCrop(28, padding=4),
-			transforms.ToTensor(),
-			normalize(mean=[0.3352, 0.3173, 0.3584], std=[0.2662, 0.2563, 0.2727]),
-		])
-		transform_test = transforms.Compose([
-			transforms.ToTensor(),
-			normalize(mean=[0.3352, 0.3173, 0.3584], std=[0.2662, 0.2563, 0.2727]),
-		])
-
-		with open('{}/39209-all/images.pkl'.format(dataPath), 'rb') as f:
-			images = torch.from_numpy(pickle.load(f)).float()
-		with open('{}/39209-all/labels.pkl'.format(dataPath), 'rb') as f:
-			labels = torch.from_numpy(pickle.load(f))
-			labels = torch.argmax(labels, 1)
-		with open('{}/39209-all/testImages.pkl'.format(dataPath), 'rb') as f:
-			testImages = torch.from_numpy(pickle.load(f)).float()
-		with open('{}/39209-all/testLabels.pkl'.format(dataPath), 'rb') as f:
-			testLabels = torch.from_numpy(pickle.load(f))
-			testLabels = torch.argmax(testLabels, 1)
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
-		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=1)
-
-		testDataset = myDataset(testImages, testLabels, classes, transform_test)
-		testLoader = DataLoader(testDataset, batch_size=test_batch_size, shuffle=False, num_workers=1)
-	elif(dataType == 'MNIST'):
-		classes = ['{}'.format(i) for i in range(10)]
-		num_classes = len(classes)
-		shape = (1, 28, 28)
-		lrDecayStep = [50, 75]
-		n_epochs = 100
-
-		if(methodType == 'bc'):
-			normalize = ZeroMean
-		else:
-			normalize = transforms.Normalize
-		transform_train = transforms.Compose([
-			transforms.RandomCrop(28, padding=4),
-			transforms.ToTensor(),
-			normalize(mean=[0.1307,], std=[0.3081,]),
-		])
-		transform_test = transforms.Compose([
-			transforms.ToTensor(),
-			normalize(mean=[0.1307,], std=[0.3081,]),
-		])
-
-		oriTrainDataset = datasets.MNIST(dataPath, 
-									  train=True, download=False, transform=transform_train)
-		images = oriTrainDataset.data
-		labels = oriTrainDataset.targets
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
-		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=1)
-
-		oriTestDataset = datasets.MNIST(dataPath, 
-									 train=False, download=False, transform=transform_test)
-		testImages = oriTestDataset.data
-		testLabels = oriTestDataset.targets
-		testDataset = myDataset(testImages, testLabels, classes, transform_test)
-		testLoader = DataLoader(testDataset, batch_size=test_batch_size, shuffle=False, num_workers=1)
-	elif(dataType == 'FASHION-MNIST'):
-		classes = ['{}'.format(i) for i in range(10)]
-		num_classes = len(classes)
-		shape = (1, 28, 28)
-		lrDecayStep = [50, 75]
-		n_epochs = 100
-
-		if(methodType == 'bc'):
-			normalize = ZeroMean
-		else:
-			normalize = transforms.Normalize
-		transform_train = transforms.Compose([
-			transforms.RandomCrop(28, padding=4),
-			transforms.RandomHorizontalFlip(),
-			transforms.ToTensor(),
-			normalize(mean=[0.2860,], std=[0.3530,]),
-		])
-		transform_test = transforms.Compose([
-			transforms.ToTensor(),
-			normalize(mean=[0.2860,], std=[0.3530,]),
-		])
-
-		oriTrainDataset = datasets.FashionMNIST(dataPath, 
-									  train=True, download=True, transform=transform_train)
-		images = oriTrainDataset.data
-		labels = oriTrainDataset.targets
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
-		trainLoader = DataLoader(trainDataset, batch_size=train_batch_size, shuffle=True, num_workers=1)
-
-		oriTestDataset = datasets.FashionMNIST(dataPath, 
-									 train=False, download=False, transform=transform_test)
-		testImages = oriTestDataset.data
-		testLabels = oriTestDataset.targets
-		testDataset = myDataset(testImages, testLabels, classes, transform_test)
-		testLoader = DataLoader(testDataset, batch_size=test_batch_size, shuffle=False, num_workers=1)
-	
-	return trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, lrDecayStep, n_epochs
-
-def get_imageNet_classId2Name():
-	m = loadmat('Dataset/ImageNet-meta.mat')
-	clsId2clsName = dict()
-	for i in range(len(m['synsets'])):
-		clsId2clsName[m['synsets'][i][0][1][0]] = m['synsets'][i][0][2][0]
-	return clsId2clsName
-
-def shuffle(x, y):
-	perm = np.random.permutation(len(x))
-	x_shuffle = x[perm]
-	y_shuffle = y[perm]
-	return x_shuffle, y_shuffle
-
-def get_cls_result(net, dataLoader):
-	y_score, y_true = [], []
-	for i, data in enumerate(dataLoader, 0):
-		inputs, labels = data
-		y_true.extend(labels.numpy())
-		inputs = inputs.to(device)
-		labels = labels.to(device)
-		optimizer.zero_grad()
-		with torch.set_grad_enabled(False):
-			outputs = net(inputs)
-			y_score.extend(outputs.cpu().detach().numpy())
-	y_score = np.array(y_score)
-	y_true = np.array(y_true)
-	return y_true, y_score
-
-def get_roc_data(y_true, y_score, n_classes, rocType='micro'):
-	fpr = dict() 
-	tpr = dict() 
-	thres = dict()
-	roc_auc = dict() 
-	for i in range(n_classes): 
-		fpr[i], tpr[i], thres[i] = roc_curve(y_true[:, i], y_score[:, i]) 
-		roc_auc[i] = auc(fpr[i], tpr[i])
-	if(rocType == "micro"):
-		fprOut, tprOut, _ = roc_curve(y_true.ravel(), y_score.ravel())
-	elif(rocType == "macro"):
-		all_fpr = np.unique(np.concatenate([fpr[i] for i in range(n_classes)])) 
-		mean_tpr = np.zeros_like(all_fpr) 
-		for i in range(n_classes): 
-			mean_tpr += interp(all_fpr, fpr[i], tpr[i]) 
-		mean_tpr /= n_classes 
-		fprOut = all_fpr 
-		tprOut = mean_tpr 
-	aucOut = auc(fprOut, tprOut)
-	ROC = dict()
-	ROC['fpr'], ROC['tpr'], ROC['auc'] = fprOut, tprOut, aucOut
-	return ROC
-
-def ROC_plot(sorted_ROC):
-	lw=2
-	plt.figure(figsize=(10, 10)) 
-	title = "{} AUC : ".format(dataset)
-	for i, ROC in enumerate(sorted_ROC):
-		if(i == len(sorted_ROC) - 1):
-			title += "{}".format(ROC[0])
-		else:
-			title += "{} > ".format(ROC[0])
-		plt.plot(ROC[1]["fpr"], ROC[1]["tpr"], 
-				 label='{}\'s AUC = {}'.format(ROC[0], ROC[1]["auc"]), linestyle='--', linewidth=lw) 
-	plt.plot([0, 1], [0, 1], 'k--', lw=lw) 
-	plt.xlim([-0.02, 1.02])
-	plt.ylim([-0.02, 1.02]) 
-	plt.xlabel('False Positive Rate') 
-	plt.ylabel('True Positive Rate') 
-	plt.title(title) 
-	plt.legend(loc="lower right") 
-#     plt.savefig("{}/{}-{}{}-ROC.jpg".format(path, dataset, num_examples, suffix))
-	plt.show()
-
-def distribution(labels, type='normal'):
-	result = {}
-	if(type == 'onehot'):
-		ll = np.argmax(labels, axis=1)
-	else:
-		ll = labels
-	for i in set(ll):
-		result[i] = ll.tolist().count(i)
-	print_log("Label distribution: {}".format(result), logger, 'info')
-
-def cal_mean_std(dataset):
-	dataLoader = DataLoader(dataset, batch_size=dataset.__len__(), shuffle=True, num_workers=1)
-	it = iter(dataLoader)
-	images, labels = it.next()
-	images = np.array(images)
-	mean = np.round(np.mean(images, axis=(0, 2, 3)), 4)
-	std = np.round(np.std(images, axis=(0, 2, 3)), 4)
-	return mean, std
-
 def eval_total(net, dataLoader):
 	start = time.time()
 	correct = 0
@@ -490,7 +93,7 @@ def eval_total(net, dataLoader):
 
 	accTotal = 100 * correct / total
 	duration = time.time() - start
-	print_log('Accuracy of the network on the 10000 test images: {:.2f}% ({:.0f}mins {:.2f}s)'.format(accTotal, duration // 60, duration % 60), logger, 'info')
+	print_log('Accuracy of the network on the {} test images: {:.2f}% ({:.0f}mins {:.2f}s)'.format(total, accTotal, duration // 60, duration % 60), logger, 'info')
 	return accTotal
 
 def eval_per_class(net, dataLoader, classes):
@@ -520,145 +123,14 @@ def eval_per_class(net, dataLoader, classes):
 	print_log(accPerClass, logger, 'info')
 	print_log('Duration for accPerClass : {:.0f}mins {:.2f}s'.format(duration // 60, duration % 60), logger, 'info')
 	return accPerClass
-
-def plot_acc_loss(log, type, prefix='', suffix=''):
-	trainAcc = log['acc']['train']
-	trainLoss = log['loss']['train']
-	valAcc = log['acc']['val']
-	valLoss = log['loss']['val']
-	if(type == 'loss'):
-		plt.figure(figsize=(7, 5))
-		plt.plot(trainLoss, label='Train_loss')
-		plt.plot(valLoss, label='Test_loss')
-		plt.title('Epoch - Loss')
-		plt.xlabel('Epoch')
-		plt.ylabel('Loss')
-		plt.legend()
-		figName = '{}loss{}.png'.format(prefix, suffix)
-	elif(type == 'accuracy'):
-		plt.figure(figsize=(7, 5))
-		plt.plot(trainAcc, label='Train_acc')
-		plt.plot(valAcc, label='Test_acc')
-		plt.title('Epoch - Acuracy')
-		plt.xlabel('Epoch')
-		plt.ylabel('Accuracy')
-#         plt.ylim(0, 1.01)
-		plt.legend()
-		figName = '{}accuracy{}.png'.format(prefix, suffix)
-	elif(type == 'both'):
-		fig, ax1 = plt.subplots(figsize=(7, 5))
-		ax2 = plt.twinx()
-		ax1.set_xlabel('Epoch')
-		ax1.set_ylabel('Loss')
-		ax2.set_ylabel('Accuracy')
-		plt.ylim(0, 1.01)
-		plt.title('Loss & Accuracy')
-
-		l_trainLoss, = ax1.plot(trainLoss)
-		l_testLoss, = ax1.plot(valLoss)
-		l_trainAcc, = ax2.plot(trainAcc)
-		l_testAcc, = ax2.plot(valAcc)
-		plt.legend([l_trainLoss, l_testLoss, l_trainAcc, l_testAcc],
-				  ['Train_loss', 'Test_loss', 'Train_acc', 'Test_acc'])
-		figName = '{}loss_accuracy{}.png'.format(prefix, suffix)
-
-	plt.grid(linewidth=1, linestyle='-.')
-	plt.savefig(os.path.join(modelPath, figName), dpi=200, bbox_inches='tight')
-	plt.show()
 	
-def mixup_data(x, y, alpha=1.0):
-	'''Returns mixed inputs, pairs of targets, and lambda'''
-	if alpha > 0:
-		lam = np.random.beta(alpha, alpha)
-	else:
-		lam = 1
-	batch_size = x.size()[0]
-	index = torch.randperm(batch_size)
-
-	mixed_x = lam * x + (1 - lam) * x[index, :]
-	y_a, y_b = y, y[index]
-	
-	return mixed_x, y_a, y_b, lam
-
-def mixup_criterion(criterion, pred, y_a, y_b, lam):
-	return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
-
-def get_shuffled_data(x, y):
-	index = torch.randperm(x.shape[0])
-	x_a, x_b = x, x[index]
-	y_a, y_b = y, y[index]
-	return x_a, x_b, y_a, y_b
-
-def cal_ssim(img1, img2):
-	img1 = img1.cpu().detach().numpy()
-	img2 = img2.cpu().detach().numpy()
-	k1 = 0.01
-	k2 = 0.03
-	l = 255
-	C1 = (k1 * l) ** 2
-	C2 = (k2 * l) ** 2
-	C3 = C2 / 2
-	mean1 = np.mean(img1, axis=(1, 2, 3))
-	mean2 = np.mean(img2, axis=(1, 2, 3))
-	var1 = np.var(img1, axis=(1, 2, 3))
-	var2 = np.var(img2, axis=(1, 2, 3))
-	std1 = np.sqrt(var1)
-	std2 = np.sqrt(var2)
-	cov = np.mean((img1 - mean1[:, np.newaxis, np.newaxis, np.newaxis]) * 
-				  (img2 - mean2[:, np.newaxis, np.newaxis, np.newaxis]), axis=(1, 2, 3))
-	L = (2 * mean1 * mean2 + C1) / (mean1 ** 2 + mean2 ** 2 + C1)
-	C = (2 * std1 * std2 + C2) / (std1 ** 2 + std2 ** 2 + C2)
-	S = (cov + C3) / (std1 * std2 + C3)
-	ssim = L * C * S
-	return torch.from_numpy(ssim).to(device)
-
-def Euclidean_distance(P, Q):
-	P = F.softmax(P.view(P.shape[0], -1), 1) + 1e-9
-	Q = F.softmax(Q.view(Q.shape[0], -1), 1) + 1e-9
-	return ((P - Q) ** 2).sum(1).sqrt()
-
-def KL_divergence(P, Q):
-	P = F.softmax(P.view(P.shape[0], -1), 1) + 1e-9
-	Q = F.softmax(Q.view(Q.shape[0], -1), 1) + 1e-9
-	return torch.sum(P * P.log() - P * Q.log(), 1)
-
-def JS_divergence(P, Q):
-	return 0.5 * KL_divergence(P, (P + Q) / 2) + 0.5 * KL_divergence(Q, (P + Q) / 2)
-
-# def EMD(P, Q):
-# 	a = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
-# 	b = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
-# 	dis = []
-# 	for i in range(len(P)):
-# 		M = ot.dist(P[i].view(-1, 1).cpu().detach().numpy(), Q[i].view(-1, 1).cpu().detach().numpy(), 'euclidean')
-# 		d = ot.emd2(a, b, M)
-# 		dis.append(d)
-# 	return torch.Tensor(dis)
-
-# def sinkhorn(P, Q):
-# 	a = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
-# 	b = np.ones(shape[0] * shape[1] * shape[2]) / (shape[0] * shape[1] * shape[2])
-# 	dis = []
-# 	for i in range(len(P)):
-# 		M = ot.dist(P[i].view(-1, 1).cpu().detach().numpy(), Q[i].view(-1, 1).cpu().detach().numpy(), 'euclidean')
-# 		d = ot.sinkhorn2(a, b, M, 1, numItermax=100)
-# 		dis.append(d)
-# 	return torch.Tensor(dis)
-
-def norm1(P, Q):
-#     P = P.view(P.shape[0], -1)
-#     Q = Q.view(Q.shape[0], -1)
-	return (P - Q).abs().mean(1).mean(1).mean(1)
-#     return torch.norm(P - Q, p=1, dim=[1, 2, 3])
-
-
 def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoader):
 	lossLog = dict({'train': [], 'val': []})
 	accLog = dict({'train': [], 'val': []})
 	dataSet = {'train': trainDataset, 'val': valDataset}
 	dataLoader = {'train': trainLoader, 'val': valLoader}
 	dataSize = {x: dataSet[x].__len__() for x in ['train', 'val']}
-	batchSize = {'train': train_batch_size, 'val': test_batch_size}
+	batchSize = {'train': trainBS, 'val': testBS}
 	iterNum = {x: np.ceil(dataSize[x] / batchSize[x]).astype('int32') for x in ['train', 'val']}
 	print_log('dataSize: {}'.format(dataSize), logger, 'info')
 	print_log('batchSize: {}'.format(batchSize), logger, 'info')
@@ -682,8 +154,11 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 				inputs, labels = data
 				inputs = inputs.to(device)
 				labels = labels.to(device)
+				lam = None
 				if(method == 'mixup' and phase == 'train'):
-					inputs, labels_a, labels_b, lam = mixup_data(inputs, labels)
+					inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, 1.0)
+				elif(method == 'manifoldmixup' and phase == 'train'):
+					inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, 2.0)
 				elif(method in ['automix', 'adamixup'] and phase == 'train'):
 					inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
 					
@@ -725,20 +200,26 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						x_all = torch.cat([x_mix, inputs_a], 0)
 						y_all = torch.cat([y_mix, labels_a], 0)
 						inputs, labels = shuffle(x_all, y_all)
-
-						if(i in [0, 1]):
-							cmap = 'gray'
-							print(lam[0].item())
-							plt.subplot(131)
-							plt.imshow(inputs_a[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
-							plt.subplot(132)
-							plt.imshow(inputs_b[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
-							plt.subplot(133)
-							plt.title(y_mix[0].cpu())
-							plt.imshow(x_mix[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
-							plt.show()
-					outputs = net(inputs)
+						# if(i in [0, 1]):
+						# 	cmap = 'gray'
+						# 	print(lam[0].item())
+						# 	plt.subplot(131)
+						# 	plt.imshow(inputs_a[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
+						# 	plt.subplot(132)
+						# 	plt.imshow(inputs_b[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
+						# 	plt.subplot(133)
+						# 	plt.title(y_mix[0].cpu())
+						# 	plt.imshow(x_mix[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
+						# 	plt.show()
+					elif(method == 'manifoldmixup' and phase == 'train'):
+						y_mix = lam * labels_a + (1 - lam) * labels_b
+						inputs, labels = shuffle(inputs, y_mix)
+					if(phase == 'train'):
+						outputs = net(inputs, manifoldMixup=(method=='manifoldmixup'), lam=lam)
+					else:
+						outputs = net(inputs)
 					preds = torch.argmax(outputs, 1)
+
 					if(method in ['mixup'] and phase == 'train'):
 						clsLoss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
 					else:
@@ -773,7 +254,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 				running_loss.append(loss.cpu().item())
 				if(method in ['mixup'] and phase == 'train'):
-					num_correct = (lam.cpu().item() * preds.eq(torch.argmax(labels_a, 1)).cpu().sum().float().item() + (1 - lam.cpu().item()) * preds.eq(torch.argmax(labels_b, 1)).cpu().sum().float().item())
+					num_correct = (lam * preds.eq(torch.argmax(labels_a, 1)).cpu().sum().float().item() + (1 - lam) * preds.eq(torch.argmax(labels_b, 1)).cpu().sum().float().item())
 				else:
 					num_correct = preds.eq(torch.argmax(labels, 1)).cpu().sum().float().item()
 				running_corrects += num_correct
@@ -821,7 +302,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 				if not os.path.isdir(modelPath):
 					os.makedirs(modelPath)
 				torch.save(state, os.path.join(modelPath, finalModelName))
-		print_log('\n', logger, 'info')
+		print_log('', logger, 'info')
 	duration = time.time() - start
 	print_log('Training complete in {:.0f}h {:.0f}m {:.2f}s'.format(duration // 3600, (duration % 3600) // 60, duration % 60), logger, 'info')
 	print_log('Best val Acc: {:4f}'.format(best_acc), logger, 'info')
@@ -844,8 +325,8 @@ def get_model(netType, methodType, num_classes, shape):
 	net = net.to(device)
 	outputNet = [net]
 	parameters = [{'params': net.parameters()}]
-	# summary(model=net, input_size=shape)
-
+	print_log('Backbone : [{}]\n{}'.format(netType, summary(model=net, input_size=shape)), logger, 'info')
+	
 	if(methodType == 'automix'):
 		unet = UNet(input_shape=(shape[0], shape[1], shape[2]), output_shape=shape, num_classes=num_classes)
 		unet = unet.to(device)
@@ -867,63 +348,58 @@ def get_model(netType, methodType, num_classes, shape):
 
 	return outputNet, parameters
 
-def get_logging(log_path):
-	logging.basicConfig(
-		level=logging.DEBUG,
-		format='%(asctime)s %(filename)s %(levelname)s\t%(message)s',
-		datefmt='%Y-%m-%d %H:%M:%S',
-		filename=log_path,
-		filemode='w')
-	# console = logging.StreamHandler()
-	logger = logging.getLogger(__name__)
-
-	return logger
-
 if(__name__ == '__main__'):
 	# torch.autograd.set_detect_anomaly(True)
+	defaultSetting = {
+				'IMAGENET'		: ['/media/reborn/Others2/ImageNet', 90],
+				'CIFAR10'		: ['Dataset/cifar10', 300],
+				'CIFAR100'		: ['Dataset/cifar100', 300],
+				'MNIST'			: ['Dataset/mnist', 100],
+				'FASHION-MNIST'	: ['Dataset/fashion-mnist', 100],
+				'GTSRB'			: ['Dataset/GTSRB', 100],
+				}
 
 	args = parse_args()
 
+	dataset = str(args.dataset).upper()
 	method = str(args.method).lower()
 	arch = str(args.arch).lower()
-	dataset = str(args.dataset).upper()
-	train_batch_size = int(args.batch_size)
-	test_batch_size = 10
-	num_workers = int(args.num_workers)
+	trainBS = int(args.batch_size)
+	testBS = 10
+	numWorkers = int(args.num_workers)
 	learning_rate = float(args.lr)
 	momentum = float(args.momentum)
 	weight_decay = float(args.weight_decay)
-	log_path = str(args.log_path)
-	if(not args.data_dir):
-		dataPathDict = {
-				'IMAGENET'		: '/media/reborn/Others2/ImageNet',
-				'CIFAR10'		: 'Dataset/cifar10',
-				'CIFAR100'		: 'Dataset/cifar100',
-				'MNIST'			: 'Dataset/mnist',
-				'FASHION-MNIST'	: 'Dataset/fashion-mnist',
-				'GTSRB'			: 'Dataset/GTSRB',
-				}
-		args.data_dir = dataPathDict[dataset]
-	data_dir = str(args.data_dir)
-	logger = get_logging(log_path)
+	args.data_dir = str(args.data_dir) if args.data_dir else defaultSetting[dataset][0]
+	dataDir = str(args.data_dir)
+	args.epoch = int(args.epoch) if args.epoch else defaultSetting[dataset][1]
+	epochs = int(args.epoch)
+	expName = get_exp_name(dataset=dataset,
+							arch=arch,
+							epochs=epochs,
+							batch_size=trainBS,
+							lr=learning_rate,
+							momentum=momentum,
+							decay=weight_decay,
+							method=method)
+	args.log_path = str(args.log_path) if args.log_path else os.path.join(os.getcwd(),'{}|{}.log'.format(expName, datetime.datetime.now().strftime('%Y-%m-%d|%H:%M:%S')))
+	logPath = str(args.log_path)
+	logger = get_logging(logPath)
 
-	print_log(args, logger, 'info')
-	
+	print_log("Arguments :\n{}".format(args), logger, 'info')
+	print_log("Experiment settings :\n{}".format(expName), logger, 'info')
+	print_log("python version : {}".format(sys.version.replace('\n', ' ')), logger, 'info')
+	print_log("torch  version : {}".format(torch.__version__), logger, 'info')
+	print_log("cudnn  version : {}".format(torch.backends.cudnn.version()), logger, 'info')
 	if(len(args.gpu) > 0):
 		os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 		print_log('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]), logger, 'info')
 	print_log('torch.cuda.is_available : {}'.format(torch.cuda.is_available()), logger, 'info')
 	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-	# netList = ['mynet', 'resnet18']
-	# netIndex = 1
-	# dataName = ['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML']
-	# dataIndex = 0
-	# methodList = ['baseline', 'bc', 'mixup', 'automix', 'adamixup']
-	# methodIndex = 0
-	# print(arch, dataset, method)
-
-	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, lrDecayStep, n_epochs = get_dataset(dataset, method, data_dir)
+	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, lrDecayStep = get_dataset(dataset, method, dataDir, trainBS, testBS, numWorkers)
+	if(epochs):
+		n_epochs = epochs
 	print_log('Dataset [{}] loaded!'.format(dataset), logger, 'info')
 
 	modelPath = 'pytorch_model_learnt/{}/{}/{}'.format(dataset, arch, method)
@@ -950,9 +426,9 @@ if(__name__ == '__main__'):
 								  testDataset, 
 								  testLoader)
 
-		plot_acc_loss(log, 'both', '{}-'.format(method), '-{}'.format(fold+1))
-		plot_acc_loss(log, 'loss', '{}-'.format(method), '-{}'.format(fold+1))
-		plot_acc_loss(log, 'accuracy', '{}-'.format(method), '-{}'.format(fold+1))
+		plot_acc_loss(log, 'both', modelPath, '{}-'.format(method), '-{}'.format(fold+1))
+		plot_acc_loss(log, 'loss', modelPath, '{}-'.format(method), '-{}'.format(fold+1))
+		plot_acc_loss(log, 'accuracy', modelPath, '{}-'.format(method), '-{}'.format(fold+1))
 		if(method == 'automix'):
 			net, unet = torch.load(os.path.join(modelPath, modelName))['net']
 		elif(method == 'adamixup'):

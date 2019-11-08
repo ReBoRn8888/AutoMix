@@ -54,7 +54,7 @@ class MyNet(nn.Module):
         self.fc2 = nn.Linear(in_features=1024, out_features=1024)
         self.fc3 = nn.Linear(in_features=1024, out_features=num_classes)
 
-    def forward(self, x):
+    def forward(self, x, manifoldMixup=False, lam=None, layer_mix=None):
         out = self.conv1_1(x)
         out = self.conv1_2(out)
         out = self.maxPool(out)

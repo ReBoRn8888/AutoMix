@@ -77,3 +77,63 @@ The ImageNet Large Scale Visual Recognition Challenge (ILSVRC) dataset has 1000 
   mkdir val && mv ILSVRC2012_img_val.tar val/ && cd val && tar -xvf ILSVRC2012_img_val.tar
   wget -qO- https://raw.githubusercontent.com/soumith/imagenetloader.torch/master/valprep.sh | bash
   ```
+
+## MNIST Experiments
+
+### baseline
+```bash
+python AutoMix.py --method=baseline --arch=mynet --dataset=MNIST --data_dir=Dataset --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100
+```
+
+### bc
+```bash
+python AutoMix.py --method=bc --arch=mynet --dataset=MNIST --data_dir=Dataset --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100
+```
+
+### mixup
+```bash
+python AutoMix.py --method=mixup --arch=mynet --dataset=MNIST --data_dir=Dataset --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100
+```
+
+### automix
+```bash
+python AutoMix.py --method=automix --arch=mynet --dataset=MNIST --data_dir=Dataset --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100
+```
+
+### manifoldmixup
+```bash
+python AutoMix.py --method=manifoldmixup --arch=mynet --dataset=MNIST --data_dir=Dataset --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100
+```
+
+## CIFAR10 Experiments
+
+### baseline
+```bash
+python AutoMix.py --method=baseline --arch=resnet18 --dataset=CIFAR10 --data_dir=Dataset/CIFAR10 --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300
+```
+
+### bc
+```bash
+python AutoMix.py --method=bc --arch=resnet18 --dataset=CIFAR10 --data_dir=Dataset/CIFAR10 --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300
+```
+
+### mixup
+```bash
+python AutoMix.py --method=mixup --arch=resnet18 --dataset=CIFAR10 --data_dir=Dataset/CIFAR10 --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300
+```
+
+### automix
+```bash
+python AutoMix.py --method=automix --arch=resnet18 --dataset=CIFAR10 --data_dir=Dataset/CIFAR10 --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300
+```
+
+### manifoldmixup
+```bash
+python AutoMix.py --method=manifoldmixup --arch=resnet18 --dataset=CIFAR10 --data_dir=Dataset/CIFAR10 --batch_size=256 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300
+```
+
+## Reference
+
+[1] Tokozume Y , Ushiku Y , Harada T . Between-class Learning for Image Classification[J]. 2017.
+[2] Zhang H , Cisse M , Dauphin Y N , et al. mixup: Beyond Empirical Risk Minimization[J]. 2017.
+[3] Verma V , Lamb A , Beckham C , et al. Manifold Mixup: Better Representations by Interpolating Hidden States[J]. 2018.
