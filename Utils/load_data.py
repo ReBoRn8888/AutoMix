@@ -82,7 +82,7 @@ class ZeroMean(object):
 def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 	if(dataType == 'IMAGENET'):
 		shape = (3, 224, 224)
-		lrDecayStep = [50, 75]
+
 		# Data loading code
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -123,7 +123,6 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 		num_classes = len(classes)
 		shape = (3, 32, 32)
-		lrDecayStep = [150, 225]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -158,7 +157,6 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		classes = ['{}'.format(i) for i in range(100)]
 		num_classes = len(classes)
 		shape = (3, 32, 32)
-		lrDecayStep = [150, 225]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -193,7 +191,6 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		classes = ['{}'.format(i) for i in range(43)]
 		num_classes = len(classes)
 		shape = (3, 28, 28)
-		lrDecayStep = [50, 75]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -228,7 +225,6 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		classes = ['{}'.format(i) for i in range(10)]
 		num_classes = len(classes)
 		shape = (1, 28, 28)
-		lrDecayStep = [50, 75]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -261,7 +257,6 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		classes = ['{}'.format(i) for i in range(10)]
 		num_classes = len(classes)
 		shape = (1, 28, 28)
-		lrDecayStep = [50, 75]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -292,4 +287,4 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers)
 	
-	return trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, lrDecayStep
+	return trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape

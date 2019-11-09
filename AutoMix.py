@@ -1,14 +1,7 @@
-import torch
-import torchvision
-import torch.optim as optim
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.backends.cudnn as cudnn
-from torchvision import transforms, datasets, models
-from torch.utils.data import Dataset, TensorDataset, DataLoader
-from torch.optim import lr_scheduler
-
-import matplotlib.pyplot as plt
+import _init_paths
+# import matplotlib
+# matplotlib.use('Agg')
+# import matplotlib.pyplot as plt
 from tqdm import tqdm
 import numpy as np
 import argparse
@@ -20,12 +13,22 @@ import os
 import cv2
 import datetime
 
-import _init_paths
 from summary import summary
 from distance import *
 from utils import *
 from load_data import *
 from pytorch_models import *
+
+import torch
+import torchvision
+import torch.optim as optim
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.backends.cudnn as cudnn
+from torchvision import transforms, datasets, models
+from torch.utils.data import Dataset, TensorDataset, DataLoader
+from torch.optim import lr_scheduler
+
 
 # python AutoMix.py \
 # --method=baseline \
@@ -47,9 +50,12 @@ def parse_args():
 	parser.add_argument('--dataset', dest='dataset', default='IMAGENET', type=str, choices=['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML'], help='Dataset to be trained : [IMAGENET, CIFAR10, CIFAR100, MNIST, FASHION-MNIST, GTSRB, MIML]')
 	parser.add_argument('--data_dir', dest='data_dir', default=None, type=str, help='Path to the dataset')
 	parser.add_argument('--epoch', dest='epoch', default=None, type=int, help='Training epochs')
+	parser.add_argument('--kfold', dest='kfold', default=1, type=int, help='K-fold cross validation')
+	parser.add_argument('--criterion', dest='criterion', default='myloss', type=str, choices=['bceloss', 'myloss', 'celoss', 'mseloss'], help='Loss criterion')
 	parser.add_argument('--batch_size', dest='batch_size', default=25, type=int, help='Batch_size for training')
 	parser.add_argument('--gpu', dest='gpu', default='', type=str, help='GPU lists can be used')
 	parser.add_argument('--lr', dest='lr', default=0.05, type=float, help='Learning rate')
+	parser.add_argument('--lr_schedule', dest='lr_schedule', default=None, type=str, help='Learning rate decay schedule')
 	parser.add_argument('--num_workers', dest='num_workers', default=8, type=int, help='Num of multiple threads')
 	parser.add_argument('--momentum', dest='momentum', default=0.9, type=float, help='Momentum for optimizer')
 	parser.add_argument('--weight_decay', dest='weight_decay', default=5e-4, type=float, help='Weight_decay for optimizer')
@@ -214,6 +220,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 					elif(method == 'manifoldmixup' and phase == 'train'):
 						y_mix = lam * labels_a + (1 - lam) * labels_b
 						inputs, labels = shuffle(inputs, y_mix)
+
 					if(phase == 'train'):
 						outputs = net(inputs, manifoldMixup=(method=='manifoldmixup'), lam=lam)
 					else:
@@ -223,7 +230,10 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 					if(method in ['mixup'] and phase == 'train'):
 						clsLoss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
 					else:
-						clsLoss = criterion(outputs, labels)
+						if(criterionType == 'bceloss'):
+							clsLoss = criterion(softmax(outputs), labels)
+						else:
+							clsLoss = criterion(outputs, labels)
 #                         clsLoss = criterion(outputs, torch.argmax(labels, 1))
 					if(method == 'automix' and phase == 'train'):
 						d1 = norm1(inputs_a, x_mix)
@@ -308,8 +318,9 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 	print_log('Best val Acc: {:4f}'.format(best_acc), logger, 'info')
 
 	log = dict({'acc': accLog, 'loss': lossLog})
-	with open(os.path.join(modelPath, '{}-log-{}.pkl'.format(method, fold+1)), 'wb') as f:
+	with open(os.path.join(modelPath, '{}-log-{}.pkl'.format(expName, fold+1)), 'wb') as f:
 		pickle.dump(log, f)
+		print_log("Training logs saved to : {}".format(os.path.join(modelPath, '{}-log-{}.pkl'.format(expName, fold+1))), logger, 'info')
 
 	return best_acc, log
 
@@ -351,12 +362,12 @@ def get_model(netType, methodType, num_classes, shape):
 if(__name__ == '__main__'):
 	# torch.autograd.set_detect_anomaly(True)
 	defaultSetting = {
-				'IMAGENET'		: ['/media/reborn/Others2/ImageNet', 90],
-				'CIFAR10'		: ['Dataset/cifar10', 300],
-				'CIFAR100'		: ['Dataset/cifar100', 300],
-				'MNIST'			: ['Dataset/mnist', 100],
-				'FASHION-MNIST'	: ['Dataset/fashion-mnist', 100],
-				'GTSRB'			: ['Dataset/GTSRB', 100],
+				'IMAGENET'		: ['/media/reborn/Others2/ImageNet', 90, [50, 75]],
+				'CIFAR10'		: ['Dataset/cifar10', 300, [150, 225]],
+				'CIFAR100'		: ['Dataset/cifar100', 300, [150, 225]],
+				'MNIST'			: ['Dataset/mnist', 100, [50, 75]],
+				'FASHION-MNIST'	: ['Dataset/fashion-mnist', 100, [50, 75]],
+				'GTSRB'			: ['Dataset/GTSRB', 100, [50, 75]],
 				}
 
 	args = parse_args()
@@ -364,16 +375,20 @@ if(__name__ == '__main__'):
 	dataset = str(args.dataset).upper()
 	method = str(args.method).lower()
 	arch = str(args.arch).lower()
+	criterionType = str(args.criterion)
 	trainBS = int(args.batch_size)
 	testBS = 10
 	numWorkers = int(args.num_workers)
 	learning_rate = float(args.lr)
+	args.lr_schedule = list(map(int, args.lr_schedule.split(','))) if args.lr_schedule else defaultSetting[dataset][2]
+	lrDecayStep = args.lr_schedule
 	momentum = float(args.momentum)
 	weight_decay = float(args.weight_decay)
 	args.data_dir = str(args.data_dir) if args.data_dir else defaultSetting[dataset][0]
 	dataDir = str(args.data_dir)
 	args.epoch = int(args.epoch) if args.epoch else defaultSetting[dataset][1]
 	epochs = int(args.epoch)
+	kfold = int(args.kfold)
 	expName = get_exp_name(dataset=dataset,
 							arch=arch,
 							epochs=epochs,
@@ -381,7 +396,8 @@ if(__name__ == '__main__'):
 							lr=learning_rate,
 							momentum=momentum,
 							decay=weight_decay,
-							method=method)
+							method=method,
+							criterion=criterionType)
 	args.log_path = str(args.log_path) if args.log_path else os.path.join(os.getcwd(),'{}|{}.log'.format(expName, datetime.datetime.now().strftime('%Y-%m-%d|%H:%M:%S')))
 	logPath = str(args.log_path)
 	logger = get_logging(logPath)
@@ -397,14 +413,14 @@ if(__name__ == '__main__'):
 	print_log('torch.cuda.is_available : {}'.format(torch.cuda.is_available()), logger, 'info')
 	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, lrDecayStep = get_dataset(dataset, method, dataDir, trainBS, testBS, numWorkers)
+	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape = get_dataset(dataset, method, dataDir, trainBS, testBS, numWorkers)
 	if(epochs):
 		n_epochs = epochs
 	print_log('Dataset [{}] loaded!'.format(dataset), logger, 'info')
 
 	modelPath = 'pytorch_model_learnt/{}/{}/{}'.format(dataset, arch, method)
-	for fold in tqdm(range(1), desc='Fold'):
-		modelName = '{}-{}.ckpt'.format(method, fold+1)
+	for fold in tqdm(range(kfold), desc='Fold'):
+		modelName = '{}-{}.ckpt'.format(expName, fold+1)
 		nets, parameters = get_model(arch, method, num_classes, shape)
 		if(method == 'automix'):
 			net, unet = nets
@@ -413,8 +429,16 @@ if(__name__ == '__main__'):
 		else:
 			net = nets[0]
 
-		criterion = myLoss(method).to(device)
-	#     criterion = nn.CrossEntropyLoss().to(device)
+		softmax = nn.Softmax(dim=1).to(device)
+		if(criterionType == 'bceloss'):
+			criterion = nn.BCELoss().to(device)
+		elif(criterionType == 'myloss'):
+			criterion = myLoss(method).to(device)
+		elif(criterionType == 'mseloss'):
+			criterion = nn.MSELoss().to(device)
+		elif(criterionType == 'celoss'):
+			criterion = nn.CrossEntropyLoss().to(device)
+
 		optimizer = optim.SGD(parameters, lr=learning_rate, momentum=momentum, weight_decay=weight_decay)
 	#     optimizer = optim.Adam(parameters, lr=0.0002, betas=(0.5, 0.999))
 		exp_lr_scheduler = lr_scheduler.MultiStepLR(optimizer, lrDecayStep, gamma=0.1)
@@ -426,9 +450,9 @@ if(__name__ == '__main__'):
 								  testDataset, 
 								  testLoader)
 
-		plot_acc_loss(log, 'both', modelPath, '{}-'.format(method), '-{}'.format(fold+1))
-		plot_acc_loss(log, 'loss', modelPath, '{}-'.format(method), '-{}'.format(fold+1))
-		plot_acc_loss(log, 'accuracy', modelPath, '{}-'.format(method), '-{}'.format(fold+1))
+		plot_acc_loss(log, 'both', modelPath, logger, '{}-'.format(expName), '-{}'.format(fold+1))
+		plot_acc_loss(log, 'loss', modelPath, logger, '{}-'.format(expName), '-{}'.format(fold+1))
+		plot_acc_loss(log, 'accuracy', modelPath, logger, '{}-'.format(expName), '-{}'.format(fold+1))
 		if(method == 'automix'):
 			net, unet = torch.load(os.path.join(modelPath, modelName))['net']
 		elif(method == 'adamixup'):

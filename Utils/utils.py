@@ -1,7 +1,11 @@
+import _init_paths
 import torch
 from torch.utils.data import DataLoader
 import numpy as np
 import logging
+import os
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc
 from scipy import interp
@@ -14,7 +18,8 @@ def get_exp_name(dataset='cifar10',
 					lr=0.01,
 					momentum=0.5,
 					decay=0.0005,
-					method='baseline'):
+					method='baseline',
+					criterion='bceloss'):
 	splitChar = '|'
 	exp_name = 'dataset_' + str(dataset)
 	exp_name += splitChar + 'arch_' + str(arch)
@@ -24,6 +29,7 @@ def get_exp_name(dataset='cifar10',
 	exp_name += splitChar + 'lr_' + str(lr)
 	exp_name += splitChar + 'momentum_' + str(momentum)
 	exp_name += splitChar + 'decay_' + str(decay)
+	exp_name += splitChar + 'criterion_' + str(criterion)
 
 	return exp_name
 
@@ -135,7 +141,7 @@ def ROC_plot(sorted_ROC, dataset):
 #     plt.savefig("{}/{}-{}{}-ROC.jpg".format(path, dataset, num_examples, suffix))
 	# plt.show()
 
-def plot_acc_loss(log, type, modelPath, prefix='', suffix=''):
+def plot_acc_loss(log, type, modelPath, logger, prefix='', suffix=''):
 	trainAcc = log['acc']['train']
 	trainLoss = log['loss']['train']
 	valAcc = log['acc']['val']
@@ -178,6 +184,7 @@ def plot_acc_loss(log, type, modelPath, prefix='', suffix=''):
 
 	plt.grid(linewidth=1, linestyle='-.')
 	plt.savefig(os.path.join(modelPath, figName), dpi=200, bbox_inches='tight')
+	print_log("Figure saved to : {}".format(os.path.join(modelPath, figName)), logger, 'info')
 	# plt.show()
 
 def get_roc_data(y_true, y_score, n_classes, rocType='micro'):
