@@ -9,14 +9,22 @@ Reference:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 import random
 
-def mix(x, lam):
-	'''Compute the mixup data. Return mixed inputs, pairs of targets, and lambda'''
+def mix(x, y, alpha=1.0):
+	'''Returns mixed inputs, pairs of targets, and lambda'''
+	if alpha > 0:
+		lam = np.random.beta(alpha, alpha)
+	else:
+		lam = 1
 	batch_size = x.size()[0]
 	index = torch.randperm(batch_size)
-	mixed_x = lam * x + (1 - lam) * x[index,:]
-	return mixed_x
+	
+	mixed_x = lam * x + (1 - lam) * x[index, :]
+	y_a, y_b = y, y[index]
+	
+	return mixed_x, y_a, y_b, lam
 
 class BasicBlock(nn.Module):
 	expansion = 1
@@ -93,7 +101,7 @@ class ResNet(nn.Module):
 			self.in_planes = planes * block.expansion
 		return nn.Sequential(*layers)
 
-	def forward(self, x, manifoldMixup=False, lam=None, layer_mix=None):
+	def forward(self, x, y=None, manifoldMixup=False, mixup_alpha=1.0, layer_mix=None):
 		if(manifoldMixup):
 			if(layer_mix == None):
 				layer_mix = random.randint(0, 2)
@@ -101,37 +109,37 @@ class ResNet(nn.Module):
 			out = x
 			
 			if(layer_mix == 0):
-				out = mix(out, lam)
+				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
 			
 			out = F.relu(self.bn1(self.conv1(x)))
 			out = self.layer1(out)
 	
 			if(layer_mix == 1):
-				out = mix(out, lam)
+				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
 
 			out = self.layer2(out)
 	
 			if(layer_mix == 2):
-				out = mix(out, lam)
+				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
 
 			out = self.layer3(out)
 			
 			if(layer_mix == 3):
-				out = mix(out, lam)
+				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
 
 			out = self.layer4(out)
 			
 			if(layer_mix == 4):
-				out = mix(out, lam)
+				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
 
 			out = self.globalAvgPool(out)
 			out = out.view(out.size(0), -1)
 			out = self.linear(out)
 			
 			if(layer_mix == 5):
-				out = mix(out, lam)
+				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
 			
-			return out
+			return out, y_a, y_b, lam
 
 		else:
 			out = F.relu(self.bn1(self.conv1(x)))

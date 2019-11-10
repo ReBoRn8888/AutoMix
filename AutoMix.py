@@ -163,8 +163,6 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 				lam = None
 				if(method == 'mixup' and phase == 'train'):
 					inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, 1.0)
-				elif(method == 'manifoldmixup' and phase == 'train'):
-					inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, 2.0)
 				elif(method in ['automix', 'adamixup'] and phase == 'train'):
 					inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
 					
@@ -217,16 +215,16 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						# 	plt.title(y_mix[0].cpu())
 						# 	plt.imshow(x_mix[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
 						# 	plt.show()
-					elif(method == 'manifoldmixup' and phase == 'train'):
-						y_mix = lam * labels_a + (1 - lam) * labels_b
-						inputs, labels = shuffle(inputs, y_mix)
 
+					# Feed forward
 					if(phase == 'train'):
-						outputs = net(inputs, manifoldMixup=(method=='manifoldmixup'), lam=lam)
+						outputs, labels_a, labels_b, lam = net(inputs, labels, manifoldMixup=(method=='manifoldmixup'), mixup_alpha=2.0)
+						labels = lam * labels_a + (1 - lam) * labels_b
 					else:
 						outputs = net(inputs)
 					preds = torch.argmax(outputs, 1)
 
+					# Calculate [classification] loss
 					if(method in ['mixup'] and phase == 'train'):
 						clsLoss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
 					else:
@@ -235,6 +233,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						else:
 							clsLoss = criterion(outputs, labels)
 #                         clsLoss = criterion(outputs, torch.argmax(labels, 1))
+					# Calculate [reconstruction] loss
 					if(method == 'automix' and phase == 'train'):
 						d1 = norm1(inputs_a, x_mix)
 						d2 = norm1(inputs_b, x_mix)
@@ -254,10 +253,11 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						extra = net(x_bin)
 						logits = net.linear2(extra)
 						disLoss = criterion(logits, y_bin)
-						
 						loss = clsLoss.mean() + disLoss.mean()
 					else:
 						loss = clsLoss.mean()
+
+					# Feed backward
 					if(phase == 'train'):
 						loss.backward()
 						optimizer.step()
@@ -276,8 +276,10 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 					 .format(i+1, iterNum[phase], time.time() - epochStart, 
 							 running_loss[-1], 100 * num_correct / len(inputs), int(running_corrects), running_cnt))
 				sys.stdout.flush()
+			# Update learning_rate
 			if(phase == 'train'):
 				exp_lr_scheduler.step()
+				
 			epoch_loss = np.mean(running_loss)
 			epoch_acc = running_corrects / running_cnt
 			accLog[phase].append(epoch_acc)
@@ -420,6 +422,9 @@ if(__name__ == '__main__'):
 
 	modelPath = 'pytorch_model_learnt/{}/{}/{}'.format(dataset, arch, method)
 	for fold in tqdm(range(kfold), desc='Fold'):
+		print_log('=====================================================', logger, 'info')
+		print_log('====================  Fold #{}  ====================='.format(fold), logger, 'info')
+		print_log('=====================================================', logger, 'info')
 		modelName = '{}-{}.ckpt'.format(expName, fold+1)
 		nets, parameters = get_model(arch, method, num_classes, shape)
 		if(method == 'automix'):
