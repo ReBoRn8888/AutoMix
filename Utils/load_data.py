@@ -129,8 +129,8 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		else:
 			normalize = transforms.Normalize
 		transform_train = transforms.Compose([
-			transforms.RandomCrop(32, padding=4),
 			transforms.RandomHorizontalFlip(),
+			transforms.RandomCrop(32, padding=2),
 			transforms.ToTensor(),
 			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
 		])
@@ -163,7 +163,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		else:
 			normalize = transforms.Normalize
 		transform_train = transforms.Compose([
-			transforms.RandomCrop(32, padding=4),
+			transforms.RandomCrop(32, padding=2),
 			transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
 			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),

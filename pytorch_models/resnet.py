@@ -9,22 +9,8 @@ Reference:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
 import random
-
-def mix(x, y, alpha=1.0):
-	'''Returns mixed inputs, pairs of targets, and lambda'''
-	if alpha > 0:
-		lam = np.random.beta(alpha, alpha)
-	else:
-		lam = 1
-	batch_size = x.size()[0]
-	index = torch.randperm(batch_size)
-	
-	mixed_x = lam * x + (1 - lam) * x[index, :]
-	y_a, y_b = y, y[index]
-	
-	return mixed_x, y_a, y_b, lam
+from util import mix
 
 class BasicBlock(nn.Module):
 	expansion = 1
@@ -101,7 +87,7 @@ class ResNet(nn.Module):
 			self.in_planes = planes * block.expansion
 		return nn.Sequential(*layers)
 
-	def forward(self, x, y=None, manifoldMixup=False, mixup_alpha=1.0, layer_mix=None):
+	def forward(self, x, y=None, manifoldMixup=False, mixup_alpha=2.0, layer_mix=None):
 		if(manifoldMixup):
 			if(layer_mix == None):
 				layer_mix = random.randint(0, 2)
@@ -132,7 +118,8 @@ class ResNet(nn.Module):
 			if(layer_mix == 4):
 				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
 
-			out = self.globalAvgPool(out)
+			# out = self.globalAvgPool(out)
+			out = F.avg_pool2d(out, 4)
 			out = out.view(out.size(0), -1)
 			out = self.linear(out)
 			
@@ -147,7 +134,8 @@ class ResNet(nn.Module):
 			out = self.layer2(out)
 			out = self.layer3(out)
 			out = self.layer4(out)
-			out = self.globalAvgPool(out)
+			# out = self.globalAvgPool(out)
+			out = F.avg_pool2d(out, 4)
 			out = out.view(out.size(0), -1)
 			out = self.linear(out)
 			return out

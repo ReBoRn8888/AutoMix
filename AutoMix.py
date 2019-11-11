@@ -144,7 +144,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 	best_acc = 0.0
 	start = time.time()
 	for epoch in tqdm(range(n_epochs), desc='Epoch'):  # loop over the dataset multiple times
-		print_log('Epoch {}/{} lr = {}'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr']), logger, 'info')
+		print_log('Epoch {}/{}, lr = {}  [best_acc = {:.2f}%]'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr'], best_acc*100), logger, 'info')
 		print_log('-' * 10, logger, 'info')
 		epochStart = time.time()
 		for phase in ['train', 'val']:
@@ -217,15 +217,15 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						# 	plt.show()
 
 					# Feed forward
-					if(phase == 'train'):
-						outputs, labels_a, labels_b, lam = net(inputs, labels, manifoldMixup=(method=='manifoldmixup'), mixup_alpha=2.0)
+					if(phase == 'train' and method == 'manifoldmixup'):
+						outputs, labels_a, labels_b, lam = net(inputs, labels, manifoldMixup=True)
 						labels = lam * labels_a + (1 - lam) * labels_b
 					else:
 						outputs = net(inputs)
 					preds = torch.argmax(outputs, 1)
 
 					# Calculate [classification] loss
-					if(method in ['mixup'] and phase == 'train'):
+					if(method in ['mixup', 'manifoldmixup'] and phase == 'train'):
 						clsLoss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
 					else:
 						if(criterionType == 'bceloss'):
@@ -333,8 +333,12 @@ def get_model(netType, methodType, num_classes, shape):
 	elif(netType == 'resnet18'):
 		net = ResNet18(input_shape=shape, 
 					   num_classes=num_classes)
+	elif(netType == 'preactresnet18'):
+		net = PreActResNet18(input_shape=shape, 
+					   		 num_classes=num_classes)
+
 	if(methodType == 'adamixup'):
-		net.linear2 = nn.Linear(num_classes, 2)    
+		net.linear2 = nn.Linear(num_classes, 2)
 	net = net.to(device)
 	outputNet = [net]
 	parameters = [{'params': net.parameters()}]
