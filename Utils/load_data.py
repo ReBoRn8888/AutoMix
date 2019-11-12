@@ -148,7 +148,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 
 		oriTestDataset = datasets.CIFAR10(root=dataPath, 
-											   train=False, download=False, transform=transform_test)
+											   train=False, download=True, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = torch.Tensor(oriTestDataset.targets).long()
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
@@ -163,8 +163,8 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		else:
 			normalize = transforms.Normalize
 		transform_train = transforms.Compose([
-			transforms.RandomCrop(32, padding=2),
 			transforms.RandomHorizontalFlip(),
+			transforms.RandomCrop(32, padding=2),
 			transforms.ToTensor(),
 			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
 		])
@@ -182,7 +182,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 
 		oriTestDataset = datasets.CIFAR100(root=dataPath, 
-											   train=False, download=False, transform=transform_test)
+											   train=False, download=True, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = torch.Tensor(oriTestDataset.targets).long()
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
@@ -248,7 +248,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 
 		oriTestDataset = datasets.MNIST(dataPath, 
-									 train=False, download=False, transform=transform_test)
+									 train=False, download=True, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = oriTestDataset.targets
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
@@ -281,7 +281,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 
 		oriTestDataset = datasets.FashionMNIST(dataPath, 
-									 train=False, download=False, transform=transform_test)
+									 train=False, download=True, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = oriTestDataset.targets
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)

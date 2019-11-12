@@ -11,6 +11,23 @@ from sklearn.metrics import roc_curve, auc
 from scipy import interp
 from scipy.io import loadmat
 
+class AverageMeter(object):
+	"""Computes and stores the average and current value"""
+	def __init__(self):
+		self.reset()
+
+	def reset(self):
+		self.val = 0
+		self.avg = 0
+		self.sum = 0
+		self.count = 0
+
+	def update(self, val, n=1):
+		self.val = val
+		self.sum += val * n
+		self.count += n
+		self.avg = self.sum / self.count
+
 def get_exp_name(dataset='cifar10',
 					arch='',
 					epochs=400,
@@ -49,6 +66,12 @@ def print_log(print_string, logger, log_type):
 	print("{}".format(print_string))
 	if(log_type == 'info'):
 		logger.info("{}".format(print_string))
+
+def convert_secs2time(epoch_time):
+	need_hour = int(epoch_time / 3600)
+	need_mins = int((epoch_time - 3600*need_hour) / 60)
+	need_secs = int(epoch_time - 3600*need_hour - 60*need_mins)
+	return need_hour, need_mins, need_secs
 
 def mixup_data(x, y, alpha=1.0):
 	'''Returns mixed inputs, pairs of targets, and lambda'''
@@ -141,7 +164,7 @@ def ROC_plot(sorted_ROC, dataset):
 #     plt.savefig("{}/{}-{}{}-ROC.jpg".format(path, dataset, num_examples, suffix))
 	# plt.show()
 
-def plot_acc_loss(log, type, modelPath, logger, prefix='', suffix=''):
+def plot_acc_loss(log, type, modelPath, logger, prefix='', suffix='', printFlag=False):
 	trainAcc = log['acc']['train']
 	trainLoss = log['loss']['train']
 	valAcc = log['acc']['val']
@@ -184,7 +207,8 @@ def plot_acc_loss(log, type, modelPath, logger, prefix='', suffix=''):
 
 	plt.grid(linewidth=1, linestyle='-.')
 	plt.savefig(os.path.join(modelPath, figName), dpi=200, bbox_inches='tight')
-	print_log("Figure saved to : {}".format(os.path.join(modelPath, figName)), logger, 'info')
+	if(printFlag):
+		print_log("Figure saved to : {}".format(os.path.join(modelPath, figName)), logger, 'info')
 	# plt.show()
 
 def get_roc_data(y_true, y_score, n_classes, rocType='micro'):

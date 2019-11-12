@@ -94,29 +94,33 @@ class ResNet(nn.Module):
 
 			out = x
 			
+			if mixup_alpha is not None:
+				lam = get_lambda(mixup_alpha)
+				lam = torch.from_numpy(np.array([lam]).astype('float32')).cuda()
+
 			if(layer_mix == 0):
-				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
+				out, target_reweighted = mixup_process(out, y, lam=lam)
 			
-			out = F.relu(self.bn1(self.conv1(x)))
+			out = F.relu(self.bn1(self.conv1(out)))
 			out = self.layer1(out)
 	
 			if(layer_mix == 1):
-				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
+				out, target_reweighted = mixup_process(out, y, lam=lam)
 
 			out = self.layer2(out)
 	
 			if(layer_mix == 2):
-				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
+				out, target_reweighted = mixup_process(out, y, lam=lam)
 
 			out = self.layer3(out)
 			
 			if(layer_mix == 3):
-				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
+				out, target_reweighted = mixup_process(out, y, lam=lam)
 
 			out = self.layer4(out)
 			
 			if(layer_mix == 4):
-				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
+				out, target_reweighted = mixup_process(out, y, lam=lam)
 
 			# out = self.globalAvgPool(out)
 			out = F.avg_pool2d(out, 4)
@@ -124,9 +128,9 @@ class ResNet(nn.Module):
 			out = self.linear(out)
 			
 			if(layer_mix == 5):
-				out, y_a, y_b, lam = mix(out, y, mixup_alpha)
+				out, target_reweighted = mixup_process(out, y, lam=lam)
 			
-			return out, y_a, y_b, lam
+			return out, target_reweighted
 
 		else:
 			out = F.relu(self.bn1(self.conv1(x)))

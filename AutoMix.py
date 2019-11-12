@@ -46,7 +46,7 @@ def parse_args():
 	"""Parse input arguments."""
 	parser = argparse.ArgumentParser(description='AutoMix: Mixup Networks for Sample Interpolation via Cooperative Barycenter Learning')
 	parser.add_argument('--method', dest='method', default='baseline', type=str, choices=['baseline', 'bc', 'mixup', 'automix', 'adamixup', 'manifoldmixup'], help='Method : [baseline, bc, mixup, automix, adamixup]')
-	parser.add_argument('--arch', dest='arch', default='resnet18', type=str, choices=['mynet', 'resnet18'], help='Backbone architecture : [mynet, resnet18]')
+	parser.add_argument('--arch', dest='arch', default='resnet18', type=str, choices=['mynet', 'resnet18', 'preactresnet18'], help='Backbone architecture : [mynet, resnet18, preactresnet18]')
 	parser.add_argument('--dataset', dest='dataset', default='IMAGENET', type=str, choices=['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML'], help='Dataset to be trained : [IMAGENET, CIFAR10, CIFAR100, MNIST, FASHION-MNIST, GTSRB, MIML]')
 	parser.add_argument('--data_dir', dest='data_dir', default=None, type=str, help='Path to the dataset')
 	parser.add_argument('--epoch', dest='epoch', default=None, type=int, help='Training epochs')
@@ -81,7 +81,22 @@ class myLoss(nn.Module):
 		else:
 			pred = F.log_softmax((pred+1e-9), 1)
 			loss = -torch.sum((pred+1e-9) * (truth+1e-9), 1)
-		return loss
+		return loss.mean()
+
+def accuracy(output, target, topk=(1,)):
+	"""Computes the precision@k for the specified values of k"""
+	maxk = max(topk)
+	batch_size = target.size(0)
+
+	_, pred = output.topk(maxk, 1, True, True)
+	pred = pred.t()
+	correct = pred.eq(target.view(1, -1).expand_as(pred))
+	
+	res = []
+	for k in topk:
+		correct_k = correct[:k].view(-1).float().sum(0)
+		res.append(correct_k.mul_(100.0 / batch_size))
+	return res
 
 def eval_total(net, dataLoader):
 	start = time.time()
@@ -138,13 +153,15 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 	dataSize = {x: dataSet[x].__len__() for x in ['train', 'val']}
 	batchSize = {'train': trainBS, 'val': testBS}
 	iterNum = {x: np.ceil(dataSize[x] / batchSize[x]).astype('int32') for x in ['train', 'val']}
+
 	print_log('dataSize: {}'.format(dataSize), logger, 'info')
 	print_log('batchSize: {}'.format(batchSize), logger, 'info')
 	print_log('iterNum: {}'.format(iterNum), logger, 'info')
+
 	best_acc = 0.0
 	start = time.time()
 	for epoch in tqdm(range(n_epochs), desc='Epoch'):  # loop over the dataset multiple times
-		print_log('Epoch {}/{}, lr = {}  [best_acc = {:.2f}%]'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr'], best_acc*100), logger, 'info')
+		print_log('Epoch {}/{}, lr = {}  [best_acc = {:.4f}%]'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr'], best_acc), logger, 'info')
 		print_log('-' * 10, logger, 'info')
 		epochStart = time.time()
 		for phase in ['train', 'val']:
@@ -152,21 +169,21 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 				net.train()  # Set model to training mode
 			else:
 				net.eval()   # Set model to evaluate mode
-			running_loss = []
-			running_corrects = 0
-			running_cnt = 0
+			losses = AverageMeter()
+			top1 = AverageMeter()
+			top5 = AverageMeter()
 			for i, data in enumerate(dataLoader[phase], 0):
 				# sys.stdout.flush()
 				inputs, labels = data
 				inputs = inputs.to(device)
 				labels = labels.to(device)
+				targets = labels
 				lam = None
 				if(method == 'mixup' and phase == 'train'):
 					inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, 1.0)
 				elif(method in ['automix', 'adamixup'] and phase == 'train'):
 					inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
 					
-				optimizer.zero_grad()
 				with torch.set_grad_enabled(phase == 'train'):
 					if(method == 'adamixup' and phase == 'train'):
 						midIdx = int(len(inputs_a) / 2)
@@ -187,9 +204,9 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						y_weight = weight.view(len(inputs_a), 1)
 						x_mix = inputs_a * x_weight + inputs_b * (1 - x_weight)
 						y_mix = labels_a * y_weight + labels_b * (1 - y_weight)
-						x_all = torch.cat([x_mix, inputs_a, inputs_b], 0)
-						y_all = torch.cat([y_mix, labels_a, labels_b], 0)
-						inputs, labels = shuffle(x_all, y_all)
+						inputs = torch.cat([x_mix, inputs_a], 0)
+						labels = torch.cat([y_mix, labels_a], 0)
+						inputs, targets = shuffle(inputs, labels)
 					elif(method == 'automix' and phase == 'train'):
 						midIdx = int(len(inputs_a) / 2)
 						inputs_unseen = torch.cat([inputs_a[midIdx:]], 0)
@@ -203,7 +220,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						
 						x_all = torch.cat([x_mix, inputs_a], 0)
 						y_all = torch.cat([y_mix, labels_a], 0)
-						inputs, labels = shuffle(x_all, y_all)
+						inputs, targets = shuffle(x_all, y_all)
 						# if(i in [0, 1]):
 						# 	cmap = 'gray'
 						# 	print(lam[0].item())
@@ -218,21 +235,19 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 					# Feed forward
 					if(phase == 'train' and method == 'manifoldmixup'):
-						outputs, labels_a, labels_b, lam = net(inputs, labels, manifoldMixup=True)
-						labels = lam * labels_a + (1 - lam) * labels_b
+						outputs, targets = net(inputs, labels, manifoldMixup=True)
 					else:
 						outputs = net(inputs)
-					preds = torch.argmax(outputs, 1)
+					# preds = torch.argmax(outputs, 1)
 
 					# Calculate [classification] loss
-					if(method in ['mixup', 'manifoldmixup'] and phase == 'train'):
+					if(method in ['mixup'] and phase == 'train'):
 						clsLoss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
 					else:
 						if(criterionType == 'bceloss'):
-							clsLoss = criterion(softmax(outputs), labels)
-						else:
-							clsLoss = criterion(outputs, labels)
-#                         clsLoss = criterion(outputs, torch.argmax(labels, 1))
+							outputs = softmax(outputs)
+						clsLoss = criterion(outputs, targets)
+
 					# Calculate [reconstruction] loss
 					if(method == 'automix' and phase == 'train'):
 						d1 = norm1(inputs_a, x_mix)
@@ -240,56 +255,59 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 #                         disLoss = lam[:int(lam.shape[0]/3)] * d1 + (1 - lam[:int(lam.shape[0]/3)]) * d2
 						disLoss = lam * d1 + (1 - lam) * d2
 #                         disLoss = d1 + d2
-						loss = clsLoss.mean() + 1.5 * disLoss.mean()
+						loss = clsLoss + 1.5 * disLoss
 					elif(method == 'adamixup' and phase == 'train'):
-						x_pos = torch.cat([inputs_unseen, inputs_a, inputs_b], 0)
+						x_pos = torch.cat([inputs_unseen], 0)
 						y_pos = torch.zeros(len(x_pos), 2).scatter_(1, torch.ones(len(x_pos), 1).long(), 1).to(device)
 						x_neg = torch.cat([x_mix], 0)
 						y_neg = torch.zeros(len(x_neg), 2).scatter_(1, torch.zeros(len(x_neg), 1).long(), 1).to(device)
 						x_bin = torch.cat([x_pos, x_neg], 0)
 						y_bin = torch.cat([y_pos, y_neg], 0)
 						x_bin, y_bin = shuffle(x_bin, y_bin)
-						linear = nn.Linear(num_classes, 2)
+						# linear = nn.Linear(num_classes, 2)
 						extra = net(x_bin)
 						logits = net.linear2(extra)
+						if(criterionType == 'bceloss'):
+							logits = softmax(logits)
 						disLoss = criterion(logits, y_bin)
-						loss = clsLoss.mean() + disLoss.mean()
+						loss = clsLoss + disLoss
 					else:
-						loss = clsLoss.mean()
+						loss = clsLoss
 
 					# Feed backward
 					if(phase == 'train'):
+						optimizer.zero_grad()
 						loss.backward()
 						optimizer.step()
 
-				running_loss.append(loss.cpu().item())
-				if(method in ['mixup'] and phase == 'train'):
-					num_correct = (lam * preds.eq(torch.argmax(labels_a, 1)).cpu().sum().float().item() + (1 - lam) * preds.eq(torch.argmax(labels_b, 1)).cpu().sum().float().item())
-				else:
-					num_correct = preds.eq(torch.argmax(labels, 1)).cpu().sum().float().item()
-				running_corrects += num_correct
-				running_cnt += inputs.shape[0]
+				# measure accuracy and record loss
+				prec1, prec5 = accuracy(outputs, torch.argmax(labels, 1), topk=(1, 5))
+				losses.update(loss.item(), inputs.size(0))
+				top1.update(prec1.item(), inputs.size(0))
+				top5.update(prec5.item(), inputs.size(0))
 
 				sys.stdout.write('                                                                                                 \r')
 				sys.stdout.flush()
-				sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f}\tAcc= {:.2f}% ({}/{})\r'
-					 .format(i+1, iterNum[phase], time.time() - epochStart, 
-							 running_loss[-1], 100 * num_correct / len(inputs), int(running_corrects), running_cnt))
+				sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}% ({:.0f}/{:.0f})\r'
+					 .format(i+1, iterNum[phase], time.time() - epochStart, losses.val, losses.avg, top1.val, top1.sum/inputs.size(0), top1.count))
 				sys.stdout.flush()
+
 			# Update learning_rate
 			if(phase == 'train'):
 				exp_lr_scheduler.step()
 				
-			epoch_loss = np.mean(running_loss)
-			epoch_acc = running_corrects / running_cnt
+			sys.stdout.write('                                                                                                  \r')
+			sys.stdout.flush()
+			epoch_loss = losses.avg
+			epoch_acc = top1.avg
 			accLog[phase].append(epoch_acc)
 			lossLog[phase].append(epoch_loss)
 			epochDuration = time.time() - epochStart
 			epochStart = time.time()
-			sys.stdout.write('                                                                                                  \r')
-			sys.stdout.flush()
-			print_log('[ {} ] Loss: {:.4f} Acc: {:.2f}% ({}/{}) ({:.0f}mins {:.2f}s)'.format(phase, epoch_loss, 100 * epoch_acc, int(running_corrects), running_cnt, epochDuration // 60, epochDuration % 60), logger, 'info')
-
+			hour, minute, second = convert_secs2time(epochDuration)
+			print_log('[ {} ]  Loss: {:.4f} Acc: {:.3f}% ({:.0f}/{:.0f}) ({:.0f}h {:.0f}m {:.2f}s)'
+					.format(phase, losses.avg, top1.avg, top1.sum/inputs.size(0), top1.count, hour, minute, second), logger, 'info')
+			
 			if(phase == 'val' and epoch_acc > best_acc):
 				print_log('Saving best model to {}'.format(os.path.join(modelPath, modelName)), logger, 'info')
 				if(method == 'automix'):
@@ -315,14 +333,18 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 					os.makedirs(modelPath)
 				torch.save(state, os.path.join(modelPath, finalModelName))
 		print_log('', logger, 'info')
+
+		log = dict({'acc': accLog, 'loss': lossLog})
+		with open(os.path.join(modelPath, '{}-log-{}.pkl'.format(expName, fold+1)), 'wb') as f:
+			pickle.dump(log, f)
+			if(epoch + 1 == n_epochs):
+				print_log("Training logs saved to : {}".format(os.path.join(modelPath, '{}-log-{}.pkl'.format(expName, fold+1))), logger, 'info')
+		plot_acc_loss(log, 'both', modelPath, logger, '{}-'.format(expName), '-{}'.format(fold+1), (epoch + 1 == n_epochs))
+		plot_acc_loss(log, 'loss', modelPath, logger, '{}-'.format(expName), '-{}'.format(fold+1), (epoch + 1 == n_epochs))
+		plot_acc_loss(log, 'accuracy', modelPath, logger, '{}-'.format(expName), '-{}'.format(fold+1), (epoch + 1 == n_epochs))
 	duration = time.time() - start
 	print_log('Training complete in {:.0f}h {:.0f}m {:.2f}s'.format(duration // 3600, (duration % 3600) // 60, duration % 60), logger, 'info')
 	print_log('Best val Acc: {:4f}'.format(best_acc), logger, 'info')
-
-	log = dict({'acc': accLog, 'loss': lossLog})
-	with open(os.path.join(modelPath, '{}-log-{}.pkl'.format(expName, fold+1)), 'wb') as f:
-		pickle.dump(log, f)
-		print_log("Training logs saved to : {}".format(os.path.join(modelPath, '{}-log-{}.pkl'.format(expName, fold+1))), logger, 'info')
 
 	return best_acc, log
 
@@ -335,10 +357,8 @@ def get_model(netType, methodType, num_classes, shape):
 					   num_classes=num_classes)
 	elif(netType == 'preactresnet18'):
 		net = PreActResNet18(input_shape=shape, 
-					   		 num_classes=num_classes)
+							 num_classes=num_classes)
 
-	if(methodType == 'adamixup'):
-		net.linear2 = nn.Linear(num_classes, 2)
 	net = net.to(device)
 	outputNet = [net]
 	parameters = [{'params': net.parameters()}]
@@ -350,7 +370,15 @@ def get_model(netType, methodType, num_classes, shape):
 		outputNet.append(unet)
 		parameters.append({'params': unet.parameters()})
 	if(methodType == 'adamixup'):
-		PRG_net = ResNet18(num_classes=3)
+		if(netType == 'mynet'):
+			PRG_net = MyNet(input_shape=shape, 
+							num_classes=3)
+		elif(netType == 'resnet18'):
+			PRG_net = ResNet18(input_shape=shape, 
+							   num_classes=3)
+		elif(netType == 'preactresnet18'):
+			PRG_net = PreActResNet18(input_shape=shape, 
+									 num_classes=3)
 		PRG_net = PRG_net.to(device)
 		outputNet.append(PRG_net)
 		parameters.append({'params': PRG_net.parameters()})
@@ -369,8 +397,8 @@ if(__name__ == '__main__'):
 	# torch.autograd.set_detect_anomaly(True)
 	defaultSetting = {
 				'IMAGENET'		: ['/media/reborn/Others2/ImageNet', 90, [50, 75]],
-				'CIFAR10'		: ['Dataset/cifar10', 300, [150, 225]],
-				'CIFAR100'		: ['Dataset/cifar100', 300, [150, 225]],
+				'CIFAR10'		: ['Dataset/cifar10', 300, [75, 150, 225]],
+				'CIFAR100'		: ['Dataset/cifar100', 300, [75, 150, 225]],
 				'MNIST'			: ['Dataset/mnist', 100, [50, 75]],
 				'FASHION-MNIST'	: ['Dataset/fashion-mnist', 100, [50, 75]],
 				'GTSRB'			: ['Dataset/GTSRB', 100, [50, 75]],
@@ -448,7 +476,7 @@ if(__name__ == '__main__'):
 		elif(criterionType == 'celoss'):
 			criterion = nn.CrossEntropyLoss().to(device)
 
-		optimizer = optim.SGD(parameters, lr=learning_rate, momentum=momentum, weight_decay=weight_decay)
+		optimizer = optim.SGD(parameters, lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=True)
 	#     optimizer = optim.Adam(parameters, lr=0.0002, betas=(0.5, 0.999))
 		exp_lr_scheduler = lr_scheduler.MultiStepLR(optimizer, lrDecayStep, gamma=0.1)
 
@@ -459,9 +487,7 @@ if(__name__ == '__main__'):
 								  testDataset, 
 								  testLoader)
 
-		plot_acc_loss(log, 'both', modelPath, logger, '{}-'.format(expName), '-{}'.format(fold+1))
-		plot_acc_loss(log, 'loss', modelPath, logger, '{}-'.format(expName), '-{}'.format(fold+1))
-		plot_acc_loss(log, 'accuracy', modelPath, logger, '{}-'.format(expName), '-{}'.format(fold+1))
+		
 		if(method == 'automix'):
 			net, unet = torch.load(os.path.join(modelPath, modelName))['net']
 		elif(method == 'adamixup'):
