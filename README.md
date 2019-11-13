@@ -105,6 +105,33 @@ python AutoMix.py --method=manifoldmixup --arch=mynet --dataset=MNIST --data_dir
 python AutoMix.py --method=automix --arch=mynet --dataset=MNIST --data_dir=Dataset --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100 --kfold=10
 ```
 
+## Fashion-MNIST Experiments
+
+- Baseline
+```bash
+python AutoMix.py --method=baseline --arch=mynet --dataset=FASHION-MNIST --data_dir=Dataset --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100 --kfold=10
+```
+
+- BC [1]
+```bash
+python AutoMix.py --method=bc --arch=mynet --dataset=FASHION-MNIST --data_dir=Dataset --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100 --kfold=10
+```
+
+- Mixup [2]
+```bash
+python AutoMix.py --method=mixup --arch=mynet --dataset=FASHION-MNIST --data_dir=Dataset --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100 --kfold=10
+```
+
+- Manifold-Mixup [3]
+```bash
+python AutoMix.py --method=manifoldmixup --arch=mynet --dataset=FASHION-MNIST --data_dir=Dataset --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100 --kfold=10
+```
+
+- AutoMix
+```bash
+python AutoMix.py --method=automix --arch=mynet --dataset=FASHION-MNIST --data_dir=Dataset --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=100 --kfold=10
+```
+
 ## CIFAR10 Experiments
 
 - Baseline
@@ -124,7 +151,7 @@ python AutoMix.py --method=mixup --arch=resnet18 --dataset=CIFAR10 --data_dir=Da
 
 - Manifold-Mixup [3]
 ```bash
-python AutoMix.py --method=manifoldmixup --arch=resnet18 --dataset=CIFAR10 --data_dir=Dataset/CIFAR10 --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=2000 --weight_decay=0.0001 --lr_schedule=500,1000,1500 --kfold=10
+python AutoMix.py --method=manifoldmixup --arch=resnet18 --dataset=CIFAR10 --data_dir=Dataset/CIFAR10 --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300 --kfold=10
 ```
 
 - AutoMix
@@ -151,7 +178,7 @@ python AutoMix.py --method=mixup --arch=resnet18 --dataset=CIFAR100 --data_dir=D
 
 - Manifold-Mixup [3]
 ```bash
-python AutoMix.py --method=manifoldmixup --arch=resnet18 --dataset=CIFAR100 --data_dir=Dataset/CIFAR100 --batch_size=1024 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=2000 --weight_decay=0.0001 --lr_schedule=500,1000,1500 --kfold=10
+python AutoMix.py --method=manifoldmixup --arch=resnet18 --dataset=CIFAR100 --data_dir=Dataset/CIFAR100 --batch_size=1024 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300 --kfold=10
 ```
 
 - AutoMix

@@ -10,7 +10,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import random
-from util import mix
+import numpy as np
+from util import get_lambda, mixup_process, to_one_hot
 
 class BasicBlock(nn.Module):
 	expansion = 1

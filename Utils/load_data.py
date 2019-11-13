@@ -3,6 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 import torch
 import cv2
 import os
+import pickle
 import numpy as np
 from PIL import Image
 
@@ -79,7 +80,7 @@ class ZeroMean(object):
 	def __repr__(self):
 		return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
 
-def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
+def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sampleNum=None):
 	if(dataType == 'IMAGENET'):
 		shape = (3, 224, 224)
 
@@ -140,17 +141,29 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
 		])
 
-		oriTrainDataset = datasets.CIFAR10(root=dataPath, 
-												train=True, download=True, transform=transform_train)
+		# Load training data
+		oriTrainDataset = datasets.CIFAR10(root=dataPath, train=True, download=True, transform=transform_train)
 		images = oriTrainDataset.data
 		labels = torch.Tensor(oriTrainDataset.targets).long()
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
-		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 
-		oriTestDataset = datasets.CIFAR10(root=dataPath, 
-											   train=False, download=True, transform=transform_test)
+		# Sample if needed
+		if(sampleNum):
+			classSet = list(set(labels.numpy()))
+			idxOutput = []
+			for cls in classSet:
+				idx = np.where(labels == cls)[0][:sampleNum]
+				idxOutput.extend(idx)
+			images = images[idxOutput]
+			labels = labels[idxOutput]
+
+		# Load testing data
+		oriTestDataset = datasets.CIFAR10(root=dataPath, train=False, download=True, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = torch.Tensor(oriTestDataset.targets).long()
+
+		# Create Dataset and DataLoader
+		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
+		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers)
 	if(dataType == 'CIFAR100'):
@@ -174,17 +187,29 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
 		])
 
-		oriTrainDataset = datasets.CIFAR100(root=dataPath, 
-												train=True, download=True, transform=transform_train)
+		# Load training data
+		oriTrainDataset = datasets.CIFAR100(root=dataPath, train=True, download=True, transform=transform_train)
 		images = oriTrainDataset.data
 		labels = torch.Tensor(oriTrainDataset.targets).long()
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
-		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 
-		oriTestDataset = datasets.CIFAR100(root=dataPath, 
-											   train=False, download=True, transform=transform_test)
+		# Sample if needed
+		if(sampleNum):
+			classSet = list(set(labels.numpy()))
+			idxOutput = []
+			for cls in classSet:
+				idx = np.where(labels == cls)[0][:sampleNum]
+				idxOutput.extend(idx)
+			images = images[idxOutput]
+			labels = labels[idxOutput]
+
+		# Load testing data
+		oriTestDataset = datasets.CIFAR100(root=dataPath, train=False, download=True, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = torch.Tensor(oriTestDataset.targets).long()
+
+		# Create Dataset and DataLoader
+		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
+		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers)
 	elif(dataType == 'GTSRB'):
@@ -206,19 +231,33 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 			normalize(mean=[0.3352, 0.3173, 0.3584], std=[0.2662, 0.2563, 0.2727]),
 		])
 
+		# Load training data
 		with open('{}/39209-all/images.pkl'.format(dataPath), 'rb') as f:
 			images = torch.from_numpy(pickle.load(f)).float()
 		with open('{}/39209-all/labels.pkl'.format(dataPath), 'rb') as f:
 			labels = torch.from_numpy(pickle.load(f))
 			labels = torch.argmax(labels, 1)
+
+		# Load testing data
 		with open('{}/39209-all/testImages.pkl'.format(dataPath), 'rb') as f:
 			testImages = torch.from_numpy(pickle.load(f)).float()
 		with open('{}/39209-all/testLabels.pkl'.format(dataPath), 'rb') as f:
 			testLabels = torch.from_numpy(pickle.load(f))
 			testLabels = torch.argmax(testLabels, 1)
+
+		# Sample if needed
+		if(sampleNum):
+			classSet = list(set(labels.numpy()))
+			idxOutput = []
+			for cls in classSet:
+				idx = np.where(labels == cls)[0][:sampleNum]
+				idxOutput.extend(idx)
+			images = images[idxOutput]
+			labels = labels[idxOutput]
+
+		# Create Dataset and DataLoader
 		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
 		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
-
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers)
 	elif(dataType == 'MNIST'):
@@ -240,17 +279,29 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 			normalize(mean=[0.1307,], std=[0.3081,]),
 		])
 
-		oriTrainDataset = datasets.MNIST(dataPath, 
-									  train=True, download=True, transform=transform_train)
+		# Load training data
+		oriTrainDataset = datasets.MNIST(dataPath, train=True, download=True, transform=transform_train)
 		images = oriTrainDataset.data
 		labels = oriTrainDataset.targets
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
-		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 
-		oriTestDataset = datasets.MNIST(dataPath, 
-									 train=False, download=True, transform=transform_test)
+		# Sample if needed
+		if(sampleNum):
+			classSet = list(set(labels.numpy()))
+			idxOutput = []
+			for cls in classSet:
+				idx = np.where(labels == cls)[0][:sampleNum]
+				idxOutput.extend(idx)
+			images = images[idxOutput]
+			labels = labels[idxOutput]
+
+		# Load testing data
+		oriTestDataset = datasets.MNIST(dataPath, train=False, download=True, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = oriTestDataset.targets
+
+		# Create Dataset and DataLoader
+		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
+		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers)
 	elif(dataType == 'FASHION-MNIST'):
@@ -273,17 +324,29 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers):
 			normalize(mean=[0.2860,], std=[0.3530,]),
 		])
 
-		oriTrainDataset = datasets.FashionMNIST(dataPath, 
-									  train=True, download=True, transform=transform_train)
+		# Load training data
+		oriTrainDataset = datasets.FashionMNIST(dataPath, train=True, download=True, transform=transform_train)
 		images = oriTrainDataset.data
 		labels = oriTrainDataset.targets
-		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
-		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 
-		oriTestDataset = datasets.FashionMNIST(dataPath, 
-									 train=False, download=True, transform=transform_test)
+		# Sample if needed
+		if(sampleNum):
+			classSet = list(set(labels.numpy()))
+			idxOutput = []
+			for cls in classSet:
+				idx = np.where(labels == cls)[0][:sampleNum]
+				idxOutput.extend(idx)
+			images = images[idxOutput]
+			labels = labels[idxOutput]
+
+		# Load testing data
+		oriTestDataset = datasets.FashionMNIST(dataPath, train=False, download=True, transform=transform_test)
 		testImages = oriTestDataset.data
 		testLabels = oriTestDataset.targets
+
+		# Create Dataset and DataLoader
+		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
+		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers)
 	

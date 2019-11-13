@@ -48,6 +48,7 @@ def parse_args():
 	parser.add_argument('--method', dest='method', default='baseline', type=str, choices=['baseline', 'bc', 'mixup', 'automix', 'adamixup', 'manifoldmixup'], help='Method : [baseline, bc, mixup, automix, adamixup]')
 	parser.add_argument('--arch', dest='arch', default='resnet18', type=str, choices=['mynet', 'resnet18', 'preactresnet18'], help='Backbone architecture : [mynet, resnet18, preactresnet18]')
 	parser.add_argument('--dataset', dest='dataset', default='IMAGENET', type=str, choices=['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML'], help='Dataset to be trained : [IMAGENET, CIFAR10, CIFAR100, MNIST, FASHION-MNIST, GTSRB, MIML]')
+	parser.add_argument('--sample_num', dest='sample_num', default=None, type=int, help='The number of images sampled per class from dataset')
 	parser.add_argument('--data_dir', dest='data_dir', default=None, type=str, help='Path to the dataset')
 	parser.add_argument('--epoch', dest='epoch', default=None, type=int, help='Training epochs')
 	parser.add_argument('--kfold', dest='kfold', default=1, type=int, help='K-fold cross validation')
@@ -95,7 +96,7 @@ def accuracy(output, target, topk=(1,)):
 	res = []
 	for k in topk:
 		correct_k = correct[:k].view(-1).float().sum(0)
-		res.append(correct_k.mul_(100.0 / batch_size))
+		res.append(correct_k)
 	return res
 
 def eval_total(net, dataLoader):
@@ -282,14 +283,14 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 				# measure accuracy and record loss
 				prec1, prec5 = accuracy(outputs, torch.argmax(labels, 1), topk=(1, 5))
-				losses.update(loss.item(), inputs.size(0))
+				losses.update(loss.item()*inputs.size(0), inputs.size(0))
 				top1.update(prec1.item(), inputs.size(0))
 				top5.update(prec5.item(), inputs.size(0))
 
 				sys.stdout.write('                                                                                                 \r')
 				sys.stdout.flush()
 				sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}% ({:.0f}/{:.0f})\r'
-					 .format(i+1, iterNum[phase], time.time() - epochStart, losses.val, losses.avg, top1.val, top1.sum/inputs.size(0), top1.count))
+					 .format(i+1, iterNum[phase], time.time() - epochStart, loss.item(), losses.avg, prec1/inputs.size(0)*100, top1.sum, top1.count))
 				sys.stdout.flush()
 
 			# Update learning_rate
@@ -299,14 +300,14 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 			sys.stdout.write('                                                                                                  \r')
 			sys.stdout.flush()
 			epoch_loss = losses.avg
-			epoch_acc = top1.avg
+			epoch_acc = top1.avg*100
 			accLog[phase].append(epoch_acc)
 			lossLog[phase].append(epoch_loss)
 			epochDuration = time.time() - epochStart
 			epochStart = time.time()
 			hour, minute, second = convert_secs2time(epochDuration)
 			print_log('[ {} ]  Loss: {:.4f} Acc: {:.3f}% ({:.0f}/{:.0f}) ({:.0f}h {:.0f}m {:.2f}s)'
-					.format(phase, losses.avg, top1.avg, top1.sum/inputs.size(0), top1.count, hour, minute, second), logger, 'info')
+					.format(phase, epoch_loss, epoch_acc, top1.sum, top1.count, hour, minute, second), logger, 'info')
 			
 			if(phase == 'val' and epoch_acc > best_acc):
 				print_log('Saving best model to {}'.format(os.path.join(modelPath, modelName)), logger, 'info')
@@ -409,6 +410,7 @@ if(__name__ == '__main__'):
 	dataset = str(args.dataset).upper()
 	method = str(args.method).lower()
 	arch = str(args.arch).lower()
+	sampleNum = int(args.sample_num) if args.sample_num else args.sample_num
 	criterionType = str(args.criterion)
 	trainBS = int(args.batch_size)
 	testBS = 10
@@ -431,7 +433,8 @@ if(__name__ == '__main__'):
 							momentum=momentum,
 							decay=weight_decay,
 							method=method,
-							criterion=criterionType)
+							criterion=criterionType,
+							sampleNum=sampleNum)
 	args.log_path = str(args.log_path) if args.log_path else os.path.join(os.getcwd(),'{}|{}.log'.format(expName, datetime.datetime.now().strftime('%Y-%m-%d|%H:%M:%S')))
 	logPath = str(args.log_path)
 	logger = get_logging(logPath)
@@ -447,10 +450,12 @@ if(__name__ == '__main__'):
 	print_log('torch.cuda.is_available : {}'.format(torch.cuda.is_available()), logger, 'info')
 	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape = get_dataset(dataset, method, dataDir, trainBS, testBS, numWorkers)
+	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape = get_dataset(dataset, method, dataDir, trainBS, testBS, numWorkers, sampleNum)
 	if(epochs):
 		n_epochs = epochs
 	print_log('Dataset [{}] loaded!'.format(dataset), logger, 'info')
+	print_log('Training : {} - {}'.format(trainDataset.images.shape, trainDataset.labels.numpy().shape), logger, 'info')
+	print_log('Testing  : {} - {}'.format(testDataset.images.shape, testDataset.labels.numpy().shape), logger, 'info')
 
 	modelPath = 'pytorch_model_learnt/{}/{}/{}'.format(dataset, arch, method)
 	for fold in tqdm(range(kfold), desc='Fold'):

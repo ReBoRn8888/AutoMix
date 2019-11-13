@@ -17,14 +17,12 @@ class AverageMeter(object):
 		self.reset()
 
 	def reset(self):
-		self.val = 0
 		self.avg = 0
 		self.sum = 0
 		self.count = 0
 
 	def update(self, val, n=1):
-		self.val = val
-		self.sum += val * n
+		self.sum += val
 		self.count += n
 		self.avg = self.sum / self.count
 
@@ -36,9 +34,12 @@ def get_exp_name(dataset='cifar10',
 					momentum=0.5,
 					decay=0.0005,
 					method='baseline',
-					criterion='bceloss'):
+					criterion='bceloss',
+					sampleNum=None):
 	splitChar = '|'
 	exp_name = 'dataset_' + str(dataset)
+	if(sampleNum):
+		exp_name += '({}-pc)'.format(sampleNum)
 	exp_name += splitChar + 'arch_' + str(arch)
 	exp_name += splitChar + 'method_' + str(method)
 	exp_name += splitChar + 'epoch_' + str(epochs)
