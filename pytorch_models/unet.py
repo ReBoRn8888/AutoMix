@@ -71,8 +71,8 @@ class UNet(nn.Module):
 
         self.labelDense = nn.Sequential(
                          nn.Linear(num_classes, self.input_size),
-                         nn.BatchNorm1d(self.input_size),
-                         nn.LeakyReLU(0.2, True),
+                         # nn.BatchNorm1d(self.input_size),
+                         # nn.LeakyReLU(0.2, True),
                      )
         
         self.imageDense = nn.Sequential(
@@ -108,13 +108,12 @@ class UNet(nn.Module):
         self.maxPool = nn.MaxPool2d(kernel_size=2, stride=2)
         self.avgPool = nn.AvgPool2d(kernel_size=2, stride=2)
 
-    def forward(self, inputs):
-        x1, x2, y = inputs
-
-        yDense = self.labelDense(y)
-        x1Dense = self.imageDense(x1.view(x1.shape[0], -1))
-        x2Dense = self.imageDense(x2.view(x2.shape[0], -1))
-        x = torch.cat([x1Dense, x2Dense, yDense], 1).view(x1.shape[0], self.output_shape[0]*3, self.output_shape[1], self.output_shape[2])
+    def forward(self, x, x1, x2):
+        # yDense = self.labelDense(y)
+        # x1Dense = self.imageDense(x1.view(x1.shape[0], -1))
+        # x2Dense = self.imageDense(x2.view(x2.shape[0], -1))
+        # x = torch.cat([x1Dense, x2Dense, yDense], 1).view(x1.shape[0], self.output_shape[0]*3, self.output_shape[1], self.output_shape[2])
+        x = torch.cat([x, x1, x2], 1).view(x1.shape[0], self.output_shape[0]*3, self.output_shape[1], self.output_shape[2])
 
 
         conv1 = self.conv1(x)
@@ -135,6 +134,7 @@ class UNet(nn.Module):
         deconv3 = self.deconv41(concat3) if conv1.shape[2]%2 == 0 else self.deconv42(concat3)
         concat4 = self.crop_and_concat(deconv3, conv1)
 
-        output = F.tanh(self.finalLayer(concat4))
+        # output = concat4
+        output = torch.tanh(self.finalLayer(concat4))
 
         return output

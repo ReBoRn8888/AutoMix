@@ -80,6 +80,24 @@ class ZeroMean(object):
 	def __repr__(self):
 		return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
 
+def cal_mean_std(images):
+    rgbMean = []
+    rgbStd = []
+    for i in range(len(images)):
+        if(len(images[i].shape) == 2):
+            M, S = np.mean(images[i]), np.std(images[i])
+            rgbMean.append([M])
+            rgbStd.append([S])
+        else:
+            rM, rS = np.mean(images[i][:, :, 0]), np.std(images[i][:, :, 0])
+            gM, gS = np.mean(images[i][:, :, 1]), np.std(images[i][:, :, 1])
+            bM, bS = np.mean(images[i][:, :, 2]), np.std(images[i][:, :, 2])
+            rgbMean.append([rM, gM, bM])
+            rgbStd.append([rS, gS, bS])
+    rgbMean = np.array(rgbMean)
+    rgbStd = np.array(rgbStd)
+    return np.round(np.mean(rgbMean, 0), 4), np.round(np.mean(rgbStd, 0), 4)
+
 def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sampleNum=None):
 	if(dataType == 'IMAGENET'):
 		shape = (3, 224, 224)
@@ -254,11 +272,92 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 				idxOutput.extend(idx)
 			images = images[idxOutput]
 			labels = labels[idxOutput]
-
+		print()
 		# Create Dataset and DataLoader
 		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType)
 		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
+		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers)
+	elif(dataType == 'MIML'):
+		classes = ['{}'.format(i) for i in range(5)]
+		num_classes = len(classes)
+		shape = (3, 50, 50)
+
+		if(methodType == 'bc'):
+			normalize = ZeroMean
+		else:
+			normalize = transforms.Normalize
+		
+		def get_MIML_dataset():
+			imagePath = "{}/images/".format(dataPath)
+			labelPath = "{}/labels/".format(dataPath)
+			classFile = "{}/classes.txt".format(dataPath)
+			images, labels = [], []
+			with open(classFile, "r") as f:
+				classes = np.array(f.read().splitlines())
+			for root, dirs, files in os.walk(imagePath):
+				for file in files:
+					absPath = os.path.join(root, file)
+					image = cv2.imread(absPath, 1)
+					image = cv2.resize(image, (shape[1], shape[2]))
+					labelFile = os.path.join(labelPath, file + ".txt")
+					with open(labelFile, "r") as f:
+						label = f.read().splitlines()
+					if(len(label) == 1):
+						label = np.eye(len(classes))[int(np.where(classes == label)[0])]
+					else:
+						oriLabel = label
+						for i in range(len(oriLabel)):
+							label[i] = np.eye(len(classes))[int(np.where(classes == oriLabel[i])[0])]
+						label = np.sum(label, 0)
+					images.append(image)
+					labels.append(label)
+			images = np.array(images)
+			labels = np.array(labels)
+			perm = np.random.permutation(len(images))
+			images = images[perm]
+			labels = labels[perm]
+			trainImages = images[:1000]
+			trainLabels = labels[:1000]
+			testImages = images[1000:]
+			testLabels = labels[1000:]
+			return trainImages, trainLabels, testImages, testLabels
+
+		images, labels, testImages, testLabels = get_MIML_dataset()
+		mean, std = cal_mean_std(np.concatenate([images, testImages]))
+		transform_train = transforms.Compose([
+			transforms.RandomHorizontalFlip(),
+			transforms.RandomCrop(shape[1], padding=4),
+			transforms.ToTensor(),
+			normalize(mean=mean, std=std),
+			# normalize(mean=[0.4007, 0.4100, 0.4252], std=[0.2082, 0.2140, 0.2402]),
+		])
+		transform_test = transforms.Compose([
+			transforms.ToTensor(),
+			normalize(mean=mean, std=std),
+			# normalize(mean=[0.4007, 0.4100, 0.4252], std=[0.2082, 0.2140, 0.2402]),
+		])
+		# Load training data
+		images = torch.from_numpy(images).float()
+		labels = torch.from_numpy(labels).float()
+		# Load testing data
+		testImages = torch.from_numpy(testImages).float()
+		testLabels = torch.from_numpy(testLabels).float()
+
+		# Sample if needed
+		if(sampleNum):
+			classSet = list(set(labels.numpy()))
+			idxOutput = []
+			for cls in classSet:
+				idx = np.where(labels == cls)[0][:sampleNum]
+				idxOutput.extend(idx)
+			images = images[idxOutput]
+			labels = labels[idxOutput]
+
+		# Create Dataset and DataLoader
+		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType, onehot=False)
+		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers)
+		testDataset = myDataset(testImages, testLabels, classes, transform_test, onehot=False)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers)
 	elif(dataType == 'MNIST'):
 		classes = ['{}'.format(i) for i in range(10)]

@@ -97,15 +97,6 @@ def get_shuffled_data(x, y):
 	y_a, y_b = y, y[index]
 	return x_a, x_b, y_a, y_b
 
-def cal_mean_std(dataset):
-	dataLoader = DataLoader(dataset, batch_size=dataset.__len__(), shuffle=True, num_workers=1)
-	it = iter(dataLoader)
-	images, labels = it.next()
-	images = np.array(images)
-	mean = np.round(np.mean(images, axis=(0, 2, 3)), 4)
-	std = np.round(np.std(images, axis=(0, 2, 3)), 4)
-	return mean, std
-
 def distribution(labels, type='normal'):
 	result = {}
 	if(type == 'onehot'):
@@ -234,3 +225,33 @@ def get_roc_data(y_true, y_score, n_classes, rocType='micro'):
 	ROC = dict()
 	ROC['fpr'], ROC['tpr'], ROC['auc'] = fprOut, tprOut, aucOut
 	return ROC
+
+def mAP_evaluation(PR_results, PR_labels, numClasses):
+	classPR = []
+	for i in range(numClasses):
+		classPR.append(np.concatenate([PR_results[:, i][:, np.newaxis], PR_labels[:, i][:, np.newaxis]], 1))
+	classPR = np.array(classPR)
+	APList = []
+	for i in range(len(classPR)):
+	# for i in range(2):
+		sortIdx = np.argsort(-classPR[i][:, 0])
+		sortClassPR = classPR[i][sortIdx]
+		P, R = [], []
+		P_unique = []
+		for n in range(1, len(sortClassPR) + 1):
+			TP = np.ceil(np.sum(sortClassPR[:n-1, 1]))
+			precision = TP / n
+			recall = TP / np.sum(sortClassPR[:, 1])
+			if(n > 1 and recall == R[n - 2]):
+				P.append(P[n - 2])
+			else:
+				P.append(precision)
+				P_unique.append(precision)
+			R.append(recall)
+		P = np.array(P)
+		R = np.array(R)
+		AP = np.mean(P_unique)
+		APList.append(AP)
+	#     plot_PR(P, R, title = "P-R for class@ {} (AP = {:.4f})".format(i, AP))
+	mAP = np.mean(APList)
+	return mAP

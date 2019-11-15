@@ -173,6 +173,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 			losses = AverageMeter()
 			top1 = AverageMeter()
 			top5 = AverageMeter()
+			PR_labels, PR_results = np.array([]), np.array([])
 			for i, data in enumerate(dataLoader[phase], 0):
 				# sys.stdout.flush()
 				inputs, labels = data
@@ -180,13 +181,11 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 				labels = labels.to(device)
 				targets = labels
 				lam = None
-				if(method == 'mixup' and phase == 'train'):
-					inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, 1.0)
-				elif(method in ['automix', 'adamixup'] and phase == 'train'):
-					inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
-					
 				with torch.set_grad_enabled(phase == 'train'):
-					if(method == 'adamixup' and phase == 'train'):
+					if(method == 'mixup' and phase == 'train'):
+						inputs, labels_a, labels_b, lam = mixup_data(inputs, labels, 1.0)
+					elif(method == 'adamixup' and phase == 'train'):
+						inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
 						midIdx = int(len(inputs_a) / 2)
 						inputs_unseen = torch.cat([inputs_a[midIdx:]], 0)
 						labels_unseen = torch.cat([labels_a[midIdx:]], 0)
@@ -209,19 +208,25 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						labels = torch.cat([y_mix, labels_a], 0)
 						inputs, targets = shuffle(inputs, labels)
 					elif(method == 'automix' and phase == 'train'):
-						midIdx = int(len(inputs_a) / 2)
-						inputs_unseen = torch.cat([inputs_a[midIdx:]], 0)
-						labels_unseen = torch.cat([labels_a[midIdx:]], 0)
-						inputs_a, inputs_b = inputs_a[:midIdx], inputs_b[:midIdx]
-						labels_a, labels_b = labels_a[:midIdx], labels_b[:midIdx]
+						inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
+						# midIdx = int(len(inputs_a) / 2)
+						# inputs_unseen = torch.cat([inputs_a[midIdx:]], 0)
+						# labels_unseen = torch.cat([labels_a[midIdx:]], 0)
+						# inputs_a, inputs_b = inputs_a[:midIdx], inputs_b[:midIdx]
+						# labels_a, labels_b = labels_a[:midIdx], labels_b[:midIdx]
 						
-						lam = torch.rand(len(labels_a), 1).to(device)
+						lam = np.random.beta(1.0, 1.0)
+						# weight = torch.tensor(lam).to(device)
+						# y_weight = weight.view(len(inputs_a), 1)
+						# x_weight = weight.view(len(inputs_a), 1, 1, 1)
 						y_mix = lam * labels_a + (1 - lam) * labels_b
-						x_mix = unet([inputs_a, inputs_b, y_mix])
+						x_mix = unet(lam * inputs_a + (1 - lam) * inputs_b, inputs_a, inputs_b)
+						# x_mix = unet([inputs_a, inputs_b, y_mix])
 						
-						x_all = torch.cat([x_mix, inputs_a], 0)
-						y_all = torch.cat([y_mix, labels_a], 0)
-						inputs, targets = shuffle(x_all, y_all)
+						# x_all = torch.cat([x_mix, inputs_a], 0)
+						# y_all = torch.cat([y_mix, labels_a], 0)
+						# inputs, targets = shuffle(x_all, y_all)
+						inputs, targets = x_mix, y_mix
 						# if(i in [0, 1]):
 						# 	cmap = 'gray'
 						# 	print(lam[0].item())
@@ -239,14 +244,24 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						outputs, targets = net(inputs, labels, manifoldMixup=True)
 					else:
 						outputs = net(inputs)
-					# preds = torch.argmax(outputs, 1)
+					if(dataset == 'MIML'):
+						outputs = sigmoid(outputs)
+						# Calculate mAP for multi-label classification
+						if(i == 0):
+							PR_results = outputs.cpu().detach().numpy()
+							PR_labels = labels.cpu().detach().numpy()
+						else:
+							PR_results = np.concatenate([PR_results, outputs.cpu().detach().numpy()], 0)
+							PR_labels = np.concatenate([PR_labels, labels.cpu().detach().numpy()], 0)
+						precision = mAP_evaluation(PR_results, PR_labels, num_classes)
+					else:
+						outputs = softmax(outputs)
+
 
 					# Calculate [classification] loss
-					if(method in ['mixup'] and phase == 'train'):
+					if(method in ['mixup', 'automix'] and phase == 'train'):
 						clsLoss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
 					else:
-						if(criterionType == 'bceloss'):
-							outputs = softmax(outputs)
 						clsLoss = criterion(outputs, targets)
 
 					# Calculate [reconstruction] loss
@@ -254,9 +269,9 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						d1 = norm1(inputs_a, x_mix)
 						d2 = norm1(inputs_b, x_mix)
 #                         disLoss = lam[:int(lam.shape[0]/3)] * d1 + (1 - lam[:int(lam.shape[0]/3)]) * d2
-						disLoss = lam * d1 + (1 - lam) * d2
+						disLoss = (lam * d1 + (1 - lam) * d2).mean()
 #                         disLoss = d1 + d2
-						loss = clsLoss + 1.5 * disLoss
+						loss = clsLoss + 2 * disLoss
 					elif(method == 'adamixup' and phase == 'train'):
 						x_pos = torch.cat([inputs_unseen], 0)
 						y_pos = torch.zeros(len(x_pos), 2).scatter_(1, torch.ones(len(x_pos), 1).long(), 1).to(device)
@@ -265,11 +280,8 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						x_bin = torch.cat([x_pos, x_neg], 0)
 						y_bin = torch.cat([y_pos, y_neg], 0)
 						x_bin, y_bin = shuffle(x_bin, y_bin)
-						# linear = nn.Linear(num_classes, 2)
 						extra = net(x_bin)
 						logits = net.linear2(extra)
-						if(criterionType == 'bceloss'):
-							logits = softmax(logits)
 						disLoss = criterion(logits, y_bin)
 						loss = clsLoss + disLoss
 					else:
@@ -289,24 +301,32 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 				sys.stdout.write('                                                                                                 \r')
 				sys.stdout.flush()
-				sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}% ({:.0f}/{:.0f})\r'
-					 .format(i+1, iterNum[phase], time.time() - epochStart, loss.item(), losses.avg, prec1/inputs.size(0)*100, top1.sum, top1.count))
+				if(dataset == 'MIML'):
+					sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}%\r'
+						 .format(i+1, iterNum[phase], time.time() - epochStart, loss.item(), losses.avg, precision*100))
+				else:
+					sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}% ({:.0f}/{:.0f})\r'
+						 .format(i+1, iterNum[phase], time.time() - epochStart, loss.item(), losses.avg, prec1/inputs.size(0)*100, top1.sum, top1.count))
 				sys.stdout.flush()
+			sys.stdout.write('                                                                                                  \r')
+			sys.stdout.flush()
 
 			# Update learning_rate
 			if(phase == 'train'):
 				exp_lr_scheduler.step()
-				
-			sys.stdout.write('                                                                                                  \r')
-			sys.stdout.flush()
+			
 			epoch_loss = losses.avg
-			epoch_acc = top1.avg*100
+			epoch_acc = mAP_evaluation(PR_results, PR_labels, num_classes)*100 if dataset == 'MIML' else top1.avg*100
 			accLog[phase].append(epoch_acc)
 			lossLog[phase].append(epoch_loss)
 			epochDuration = time.time() - epochStart
 			epochStart = time.time()
 			hour, minute, second = convert_secs2time(epochDuration)
-			print_log('[ {} ]  Loss: {:.4f} Acc: {:.3f}% ({:.0f}/{:.0f}) ({:.0f}h {:.0f}m {:.2f}s)'
+			if(dataset == 'MIML'):
+				print_log('[ {} ]  Loss: {:.4f} Acc: {:.3f}% ({:.0f}h {:.0f}m {:.2f}s)'
+					.format(phase, epoch_loss, epoch_acc, hour, minute, second), logger, 'info')
+			else:
+				print_log('[ {} ]  Loss: {:.4f} Acc: {:.3f}% ({:.0f}/{:.0f}) ({:.0f}h {:.0f}m {:.2f}s)'
 					.format(phase, epoch_loss, epoch_acc, top1.sum, top1.count, hour, minute, second), logger, 'info')
 			
 			if(phase == 'val' and epoch_acc > best_acc):
@@ -403,6 +423,7 @@ if(__name__ == '__main__'):
 				'MNIST'			: ['Dataset/mnist', 100, [50, 75]],
 				'FASHION-MNIST'	: ['Dataset/fashion-mnist', 100, [50, 75]],
 				'GTSRB'			: ['Dataset/GTSRB', 100, [50, 75]],
+				'MIML'			: ['Dataset/MIML', 100, [50, 75]],
 				}
 
 	args = parse_args()
@@ -423,11 +444,11 @@ if(__name__ == '__main__'):
 	args.data_dir = str(args.data_dir) if args.data_dir else defaultSetting[dataset][0]
 	dataDir = str(args.data_dir)
 	args.epoch = int(args.epoch) if args.epoch else defaultSetting[dataset][1]
-	epochs = int(args.epoch)
+	n_epochs = int(args.epoch)
 	kfold = int(args.kfold)
 	expName = get_exp_name(dataset=dataset,
 							arch=arch,
-							epochs=epochs,
+							epochs=n_epochs,
 							batch_size=trainBS,
 							lr=learning_rate,
 							momentum=momentum,
@@ -451,8 +472,10 @@ if(__name__ == '__main__'):
 	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape = get_dataset(dataset, method, dataDir, trainBS, testBS, numWorkers, sampleNum)
-	if(epochs):
-		n_epochs = epochs
+	
+	# it = iter(trainLoader)
+	# a, b = it.next()
+	# print(a.shape, b.shape)
 	print_log('Dataset [{}] loaded!'.format(dataset), logger, 'info')
 	print_log('Training : {} - {}'.format(trainDataset.images.shape, trainDataset.labels.numpy().shape), logger, 'info')
 	print_log('Testing  : {} - {}'.format(testDataset.images.shape, testDataset.labels.numpy().shape), logger, 'info')
@@ -472,6 +495,7 @@ if(__name__ == '__main__'):
 			net = nets[0]
 
 		softmax = nn.Softmax(dim=1).to(device)
+		sigmoid = nn.Sigmoid().to(device)
 		if(criterionType == 'bceloss'):
 			criterion = nn.BCELoss().to(device)
 		elif(criterionType == 'myloss'):
@@ -492,12 +516,12 @@ if(__name__ == '__main__'):
 								  testDataset, 
 								  testLoader)
 
-		
 		if(method == 'automix'):
 			net, unet = torch.load(os.path.join(modelPath, modelName))['net']
 		elif(method == 'adamixup'):
 			net, PRG_net = torch.load(os.path.join(modelPath, modelName))['net']
 		else:
 			net = torch.load(os.path.join(modelPath, modelName))['net']
-		accTotal = eval_total(net, testLoader)
-		accPerClass = eval_per_class(net, testLoader, classes)
+		if(dataset != 'MIML'):
+			accTotal = eval_total(net, testLoader)
+			accPerClass = eval_per_class(net, testLoader, classes)
