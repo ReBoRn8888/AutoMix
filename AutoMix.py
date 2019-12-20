@@ -47,7 +47,7 @@ def parse_args():
 	parser = argparse.ArgumentParser(description='AutoMix: Mixup Networks for Sample Interpolation via Cooperative Barycenter Learning')
 	parser.add_argument('--method', dest='method', default='baseline', type=str, choices=['baseline', 'bc', 'mixup', 'automix', 'adamixup', 'manifoldmixup'], help='Method : [baseline, bc, mixup, automix, adamixup]')
 	parser.add_argument('--arch', dest='arch', default='resnet18', type=str, choices=['mynet', 'resnet18', 'preactresnet18'], help='Backbone architecture : [mynet, resnet18, preactresnet18]')
-	parser.add_argument('--dataset', dest='dataset', default='IMAGENET', type=str, choices=['IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML'], help='Dataset to be trained : [IMAGENET, CIFAR10, CIFAR100, MNIST, FASHION-MNIST, GTSRB, MIML]')
+	parser.add_argument('--dataset', dest='dataset', default='IMAGENET', type=str, choices=['IMAGENET', 'TINY-IMAGENET', 'CIFAR10', 'CIFAR100', 'MNIST', 'FASHION-MNIST', 'GTSRB', 'MIML'], help='Dataset to be trained : [IMAGENET, TINY-IMAGENET, CIFAR10, CIFAR100, MNIST, FASHION-MNIST, GTSRB, MIML]')
 	parser.add_argument('--sample_num', dest='sample_num', default=None, type=int, help='The number of images sampled per class from dataset')
 	parser.add_argument('--data_dir', dest='data_dir', default=None, type=str, help='Path to the dataset')
 	parser.add_argument('--epoch', dest='epoch', default=None, type=int, help='Training epochs')
@@ -337,8 +337,6 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 					state = {'net': [net, PRG_net], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
 				else:
 					state = {'net': net, 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
-				if not os.path.isdir(modelPath):
-					os.makedirs(modelPath)
 				torch.save(state, os.path.join(modelPath, modelName))
 				best_acc = epoch_acc
 			if(phase == 'val' and epoch == n_epochs - 1):
@@ -350,8 +348,6 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 					state = {'net': [net, PRG_net], 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
 				else:
 					state = {'net': net, 'opt': optimizer, 'acc': epoch_acc, 'epoch': epoch}
-				if not os.path.isdir(modelPath):
-					os.makedirs(modelPath)
 				torch.save(state, os.path.join(modelPath, finalModelName))
 		print_log('', logger, 'info')
 
@@ -417,7 +413,8 @@ def get_model(netType, methodType, num_classes, shape):
 if(__name__ == '__main__'):
 	# torch.autograd.set_detect_anomaly(True)
 	defaultSetting = {
-				'IMAGENET'		: ['/media/reborn/Others2/ImageNet', 90, [50, 75]],
+				'IMAGENET'		: ['/data/ImageNet', 300, [75, 150, 225, 275]],
+				'TINY-IMAGENET'	: ['/data/tiny-imagenet/tiny-imagenet-200', 300, [75, 150, 225, 275]],
 				'CIFAR10'		: ['Dataset/cifar10', 300, [75, 150, 225]],
 				'CIFAR100'		: ['Dataset/cifar100', 300, [75, 150, 225]],
 				'MNIST'			: ['Dataset/mnist', 100, [50, 75]],
@@ -477,10 +474,13 @@ if(__name__ == '__main__'):
 	# a, b = it.next()
 	# print(a.shape, b.shape)
 	print_log('Dataset [{}] loaded!'.format(dataset), logger, 'info')
-	print_log('Training : {} - {}'.format(trainDataset.images.shape, trainDataset.labels.numpy().shape), logger, 'info')
-	print_log('Testing  : {} - {}'.format(testDataset.images.shape, testDataset.labels.numpy().shape), logger, 'info')
+	print_log('Training : {} images - {} labels'.format(len(trainDataset.images), len(trainDataset.labels)), logger, 'info')
+	print_log('Testing  : {} images - {} labels'.format(len(testDataset.images), len(testDataset.labels)), logger, 'info')
 
 	modelPath = 'pytorch_model_learnt/{}/{}/{}'.format(dataset, arch, method)
+	if not os.path.isdir(modelPath):
+		os.makedirs(modelPath)
+
 	for fold in tqdm(range(kfold), desc='Fold'):
 		print_log('=====================================================', logger, 'info')
 		print_log('====================  Fold #{}  ====================='.format(fold), logger, 'info')
