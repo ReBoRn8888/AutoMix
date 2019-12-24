@@ -317,7 +317,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 			
 			epoch_loss = losses.avg
 			epoch_acc = mAP_evaluation(PR_results, PR_labels, num_classes)*100 if dataset == 'MIML' else top1.avg*100
-			accLog[phase].append(epoch_acc)
+			accLog[phase].append(epoch_acc/100)
 			lossLog[phase].append(epoch_loss)
 			epochDuration = time.time() - epochStart
 			epochStart = time.time()
@@ -372,6 +372,14 @@ def get_model(netType, methodType, num_classes, shape):
 	elif(netType == 'resnet18'):
 		net = ResNet18(input_shape=shape, 
 					   num_classes=num_classes)
+		# Load pretrained dict
+		pretrained_dict = torch.load('/data/reborn/Automix/resnet18.pth')
+		# Update state dict
+		model_dict = net.state_dict()
+		pretrained_dict = {k.replace('downsample', 'shortcut'):v for k,v in pretrained_dict.items() if k in model_dict and k != 'conv1.weight'}
+		model_dict.update(pretrained_dict)
+		net.load_state_dict(model_dict)
+		print_log('Pretrained weight loaded!', logger, 'info')	
 	elif(netType == 'preactresnet18'):
 		net = PreActResNet18(input_shape=shape, 
 							 num_classes=num_classes)
