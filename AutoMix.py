@@ -60,8 +60,9 @@ def parse_args():
 	parser.add_argument('--num_workers', dest='num_workers', default=8, type=int, help='Num of multiple threads')
 	parser.add_argument('--momentum', dest='momentum', default=0.9, type=float, help='Momentum for optimizer')
 	parser.add_argument('--weight_decay', dest='weight_decay', default=5e-4, type=float, help='Weight_decay for optimizer')
-	parser.add_argument('--parallel', dest='parallel', default=False, type=bool, help='Train parallelly with multi-GPUs?')
+	parser.add_argument('--parallel', dest='parallel', default=True, type=bool, help='Train parallelly with multi-GPUs?')
 	parser.add_argument('--log_path', dest='log_path', default=None, type=str, help='Path to the dataset')
+	parser.add_argument('--pretrain', dest='pretrain', default=False, type=bool, help='Whether to use pretrained weights for ResNets.')
 
 	args = parser.parse_args()
 	return args
@@ -74,14 +75,14 @@ class myLoss(nn.Module):
 	def forward(self, pred, truth):
 #         pred += 1e-9
 #         truth += 1e-9
+		pred = F.log_softmax(pred, 1)
 		if(self.type in ['bc', 'automix']):
 #             entropy = - torch.sum(truth[truth > 0] * torch.log(truth[truth > 0]), 1)
-			entropy = - torch.sum((truth+1e-9) * torch.log((truth+1e-9)), 1)
-			crossEntropy = - torch.sum((truth+1e-9) * F.log_softmax((pred+1e-9), 1), 1)
+			entropy = - torch.sum(truth * torch.log((truth+1e-9)), 1)
+			crossEntropy = - torch.sum(truth * pred, 1)
 			loss = crossEntropy - entropy
 		else:
-			pred = F.log_softmax((pred+1e-9), 1)
-			loss = -torch.sum((pred+1e-9) * (truth+1e-9), 1)
+			loss = -torch.sum(pred * truth, 1)
 		return loss.mean()
 
 def accuracy(output, target, topk=(1,)):
@@ -145,7 +146,21 @@ def eval_per_class(net, dataLoader, classes):
 	print_log(accPerClass, logger, 'info')
 	print_log('Duration for accPerClass : {:.0f}mins {:.2f}s'.format(duration // 60, duration % 60), logger, 'info')
 	return accPerClass
-	
+
+def load_pretrained_model(net, weightPath):
+	# Load pretrained dict
+	pretrained_dict = torch.load(weightPath)
+	# Current state dict
+	model_dict = net.state_dict()
+	# Select params that need to load
+	pretrained_dict = {k:v for k,v in pretrained_dict.items() if k in model_dict and k.find('fc') < 0}
+	# Update state dict
+	model_dict.update(pretrained_dict)
+	# Load new state dict
+	net.load_state_dict(model_dict)
+
+	return net
+
 def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoader):
 	lossLog = dict({'train': [], 'val': []})
 	accLog = dict({'train': [], 'val': []})
@@ -167,15 +182,21 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 		epochStart = time.time()
 		for phase in ['train', 'val']:
 			if(phase == 'train'):
+				# Update learning_rate
+				exp_lr_scheduler.step()
 				net.train()  # Set model to training mode
 			else:
 				net.eval()   # Set model to evaluate mode
 			losses = AverageMeter()
-			top1 = AverageMeter()
-			top5 = AverageMeter()
-			PR_labels, PR_results = np.array([]), np.array([])
+			if(dataset == 'MIML'):
+				# Init PR records for MIML
+				PR_labels, PR_results = np.array([]), np.array([])
+			else:
+				# Init AverageMeter for single-label classification
+				top1 = AverageMeter()
+				top5 = AverageMeter()	
+
 			for i, data in enumerate(dataLoader[phase], 0):
-				# sys.stdout.flush()
 				inputs, labels = data
 				inputs = inputs.to(device)
 				labels = labels.to(device)
@@ -208,25 +229,17 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						labels = torch.cat([y_mix, labels_a], 0)
 						inputs, targets = shuffle(inputs, labels)
 					elif(method == 'automix' and phase == 'train'):
-						inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
-						# midIdx = int(len(inputs_a) / 2)
-						# inputs_unseen = torch.cat([inputs_a[midIdx:]], 0)
-						# labels_unseen = torch.cat([labels_a[midIdx:]], 0)
-						# inputs_a, inputs_b = inputs_a[:midIdx], inputs_b[:midIdx]
-						# labels_a, labels_b = labels_a[:midIdx], labels_b[:midIdx]
-						
+						# inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
+						midIdx = int(len(inputs) / 2)
+						inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs[:midIdx], labels[:midIdx])
+
 						lam = np.random.beta(1.0, 1.0)
-						# weight = torch.tensor(lam).to(device)
-						# y_weight = weight.view(len(inputs_a), 1)
-						# x_weight = weight.view(len(inputs_a), 1, 1, 1)
 						y_mix = lam * labels_a + (1 - lam) * labels_b
 						x_mix = unet(lam * inputs_a + (1 - lam) * inputs_b, inputs_a, inputs_b)
-						# x_mix = unet([inputs_a, inputs_b, y_mix])
-						
-						# x_all = torch.cat([x_mix, inputs_a], 0)
-						# y_all = torch.cat([y_mix, labels_a], 0)
-						# inputs, targets = shuffle(x_all, y_all)
-						inputs, targets = x_mix, y_mix
+
+						inputs = torch.cat([x_mix, inputs[midIdx:]], 0)
+						targets = torch.cat([y_mix, labels[midIdx:]], 0)
+
 						# if(i in [0, 1]):
 						# 	cmap = 'gray'
 						# 	print(lam[0].item())
@@ -244,24 +257,16 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						outputs, targets = net(inputs, labels, manifoldMixup=True)
 					else:
 						outputs = net(inputs)
-					if(dataset == 'MIML'):
-						outputs = sigmoid(outputs)
-						# Calculate mAP for multi-label classification
-						if(i == 0):
-							PR_results = outputs.cpu().detach().numpy()
-							PR_labels = labels.cpu().detach().numpy()
-						else:
-							PR_results = np.concatenate([PR_results, outputs.cpu().detach().numpy()], 0)
-							PR_labels = np.concatenate([PR_labels, labels.cpu().detach().numpy()], 0)
-						precision = mAP_evaluation(PR_results, PR_labels, num_classes)
-					else:
-						outputs = softmax(outputs)
-
 
 					# Calculate [classification] loss
-					if(method in ['mixup', 'automix'] and phase == 'train'):
+					if(method in ['mixup'] and phase == 'train'):
+						if(criterionType == 'celoss'):
+							labels_a = torch.argmax(labels_a, 1)
+							labels_b = torch.argmax(labels_b, 1)
 						clsLoss = mixup_criterion(criterion, outputs, labels_a, labels_b, lam)
 					else:
+						if(criterionType == 'celoss'):
+							targets = torch.argmax(targets, 1)
 						clsLoss = criterion(outputs, targets)
 
 					# Calculate [reconstruction] loss
@@ -271,7 +276,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 #                         disLoss = lam[:int(lam.shape[0]/3)] * d1 + (1 - lam[:int(lam.shape[0]/3)]) * d2
 						disLoss = (lam * d1 + (1 - lam) * d2).mean()
 #                         disLoss = d1 + d2
-						loss = clsLoss + 2 * disLoss
+						loss = clsLoss + 1.5 * disLoss
 					elif(method == 'adamixup' and phase == 'train'):
 						x_pos = torch.cat([inputs_unseen], 0)
 						y_pos = torch.zeros(len(x_pos), 2).scatter_(1, torch.ones(len(x_pos), 1).long(), 1).to(device)
@@ -293,28 +298,29 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						loss.backward()
 						optimizer.step()
 
-				# measure accuracy and record loss
-				prec1, prec5 = accuracy(outputs, torch.argmax(labels, 1), topk=(1, 5))
 				losses.update(loss.item()*inputs.size(0), inputs.size(0))
-				top1.update(prec1.item(), inputs.size(0))
-				top5.update(prec5.item(), inputs.size(0))
 
 				sys.stdout.write('                                                                                                 \r')
 				sys.stdout.flush()
 				if(dataset == 'MIML'):
+					# Calculate mAP for multi-label classification
+					outputs = sigmoid(outputs)
+					PR_results = np.concatenate([PR_results, outputs.cpu().detach().numpy()], 0)
+					PR_labels = np.concatenate([PR_labels, labels.cpu().detach().numpy()], 0)
+					precision = mAP_evaluation(PR_results, PR_labels, num_classes)
 					sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}%\r'
 						 .format(i+1, iterNum[phase], time.time() - epochStart, loss.item(), losses.avg, precision*100))
 				else:
+					# Calculate top1/5 accuracy for single-label classification
+					prec1, prec5 = accuracy(outputs, torch.argmax(labels, 1), topk=(1, 5))
+					top1.update(prec1.item(), inputs.size(0))
+					top5.update(prec5.item(), inputs.size(0))
 					sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}% ({:.0f}/{:.0f})\r'
 						 .format(i+1, iterNum[phase], time.time() - epochStart, loss.item(), losses.avg, prec1/inputs.size(0)*100, top1.sum, top1.count))
 				sys.stdout.flush()
 			sys.stdout.write('                                                                                                  \r')
 			sys.stdout.flush()
 
-			# Update learning_rate
-			if(phase == 'train'):
-				exp_lr_scheduler.step()
-			
 			epoch_loss = losses.avg
 			epoch_acc = mAP_evaluation(PR_results, PR_labels, num_classes)*100 if dataset == 'MIML' else top1.avg*100
 			accLog[phase].append(epoch_acc/100)
@@ -365,21 +371,16 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 	return best_acc, log
 
-def get_model(netType, methodType, num_classes, shape):
+def get_model(netType, methodType, num_classes, shape, pretrain):
 	if(netType == 'mynet'):
 		net = MyNet(input_shape=shape, 
 					num_classes=num_classes)
 	elif(netType == 'resnet18'):
 		net = ResNet18(input_shape=shape, 
-					   num_classes=num_classes)
-		# Load pretrained dict
-		pretrained_dict = torch.load('/data/reborn/Automix/resnet18.pth')
-		# Update state dict
-		model_dict = net.state_dict()
-		pretrained_dict = {k.replace('downsample', 'shortcut'):v for k,v in pretrained_dict.items() if k in model_dict and k != 'conv1.weight'}
-		model_dict.update(pretrained_dict)
-		net.load_state_dict(model_dict)
-		print_log('Pretrained weight loaded!', logger, 'info')	
+					   num_classes=num_classes,
+					   pretrained=pretrain)
+		if(pretrain):
+			print_log('Pretrained weight loaded!', logger, 'info')
 	elif(netType == 'preactresnet18'):
 		net = PreActResNet18(input_shape=shape, 
 							 num_classes=num_classes)
@@ -400,7 +401,10 @@ def get_model(netType, methodType, num_classes, shape):
 							num_classes=3)
 		elif(netType == 'resnet18'):
 			PRG_net = ResNet18(input_shape=shape, 
-							   num_classes=3)
+							   num_classes=3,
+							   pretrained=pretrain)
+			if(pretrain):
+				print_log('Pretrained weight loaded!', logger, 'info')
 		elif(netType == 'preactresnet18'):
 			PRG_net = PreActResNet18(input_shape=shape, 
 									 num_classes=3)
@@ -451,6 +455,7 @@ if(__name__ == '__main__'):
 	args.epoch = int(args.epoch) if args.epoch else defaultSetting[dataset][1]
 	n_epochs = int(args.epoch)
 	kfold = int(args.kfold)
+	pretrain = args.pretrain
 	expName = get_exp_name(dataset=dataset,
 							arch=arch,
 							epochs=n_epochs,
@@ -494,7 +499,7 @@ if(__name__ == '__main__'):
 		print_log('====================  Fold #{}  ====================='.format(fold), logger, 'info')
 		print_log('=====================================================', logger, 'info')
 		modelName = '{}-{}.ckpt'.format(expName, fold+1)
-		nets, parameters = get_model(arch, method, num_classes, shape)
+		nets, parameters = get_model(arch, method, num_classes, shape, pretrain)
 		if(method == 'automix'):
 			net, unet = nets
 		elif(method == 'adamixup'):
@@ -516,6 +521,7 @@ if(__name__ == '__main__'):
 		optimizer = optim.SGD(parameters, lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=True)
 	#     optimizer = optim.Adam(parameters, lr=0.0002, betas=(0.5, 0.999))
 		exp_lr_scheduler = lr_scheduler.MultiStepLR(optimizer, lrDecayStep, gamma=0.1)
+		# exp_lr_scheduler = lr_scheduler.StepLR(optimizer, step_size=7, gamma=0.1)
 
 		best_acc, log = train_val(optimizer, 
 								  n_epochs, 
