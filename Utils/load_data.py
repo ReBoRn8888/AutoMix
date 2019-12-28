@@ -8,6 +8,89 @@ import numpy as np
 from PIL import Image
 import glob
 
+EXTENSION = 'JPEG'
+NUM_IMAGES_PER_CLASS = 500
+CLASS_LIST_FILE = 'wnids.txt'
+VAL_ANNOTATION_FILE = 'val_annotations.txt'
+class TinyImageNet(Dataset):
+    """Tiny ImageNet data set available from `http://cs231n.stanford.edu/tiny-imagenet-200.zip`.
+    Parameters
+    ----------
+    root: string
+        Root directory including `train`, `test` and `val` subdirectories.
+    split: string
+        Indicating which split to return as a data set.
+        Valid option: [`train`, `test`, `val`]
+    transform: torchvision.transforms
+        A (series) of valid transformation(s).
+    in_memory: bool
+        Set to True if there is enough memory (about 5G) and want to minimize disk IO overhead.
+    """
+    def __init__(self, root, split='train', transform=None, target_transform=None, in_memory=False):
+        self.root = os.path.expanduser(root)
+        self.split = split
+        self.transform = transform
+        self.target_transform = target_transform
+        self.in_memory = in_memory
+        self.split_dir = os.path.join(root, self.split)
+        self.image_paths = sorted(glob.iglob(os.path.join(self.split_dir, '**', '*.%s' % EXTENSION), recursive=True))
+        self.labels = {}  # fname - label number mapping
+        self.images = []  # used for in-memory processing
+
+        # build class label - number mapping
+        with open(os.path.join(self.root, CLASS_LIST_FILE), 'r') as fp:
+            self.label_texts = sorted([text.strip() for text in fp.readlines()])
+        self.label_text_to_number = {text: i for i, text in enumerate(self.label_texts)}
+
+        if self.split == 'train':
+            for label_text, i in self.label_text_to_number.items():
+                for cnt in range(NUM_IMAGES_PER_CLASS):
+                    self.labels['%s_%d.%s' % (label_text, cnt, EXTENSION)] = i
+        elif self.split == 'validation':
+            with open(os.path.join(self.split_dir, VAL_ANNOTATION_FILE), 'r') as fp:
+                for line in fp.readlines():
+                    terms = line.split('\t')
+                    file_name, label_text = terms[0], terms[1]
+                    self.labels[file_name] = self.label_text_to_number[label_text]
+
+        # read all images into torch tensor in memory to minimize disk IO overhead
+        if self.in_memory:
+            self.images = [self.read_image(path) for path in self.image_paths]
+
+    def __len__(self):
+        return len(self.image_paths)
+
+    def __getitem__(self, index):
+        file_path = self.image_paths[index]
+
+        if self.in_memory:
+            img = self.images[index]
+        else:
+            img = self.read_image(file_path)
+
+        if self.split == 'test':
+            return img
+        else:
+            # file_name = file_path.split('/')[-1]
+            return img, self.labels[os.path.basename(file_path)]
+
+    def __repr__(self):
+        fmt_str = 'Dataset ' + self.__class__.__name__ + '\n'
+        fmt_str += '    Number of datapoints: {}\n'.format(self.__len__())
+        tmp = self.split
+        fmt_str += '    Split: {}\n'.format(tmp)
+        fmt_str += '    Root Location: {}\n'.format(self.root)
+        tmp = '    Transforms (if any): '
+        fmt_str += '{0}{1}\n'.format(tmp, self.transform.__repr__().replace('\n', '\n' + ' ' * len(tmp)))
+        tmp = '    Target Transforms (if any): '
+        fmt_str += '{0}{1}'.format(tmp, self.target_transform.__repr__().replace('\n', '\n' + ' ' * len(tmp)))
+        return fmt_str
+
+    def read_image(self, path):
+#         img = Image.open(path)
+        img = cv2.imread(path)
+        return self.transform(img) if self.transform else img
+
 class myDataset(Dataset):
 	def __init__(self, images, labels, classes=None, transform=None, mtype='baseline', dtype='MNIST', onehot=True):
 		self.images = images
@@ -37,9 +120,6 @@ class myDataset(Dataset):
 				image2, label2 = self.images[id2], self.labels[id2]
 				if label1 != label2:
 					break
-			if(self.dtype in ['IMAGENET', 'TINY-IMAGENET']):
-				image1 = cv2.imread(image1[0])
-				image2 = cv2.imread(image2[0])
 			if(self.transform):
 				image1 = self.transform(Image.fromarray(np.uint8(image1)))
 				image2 = self.transform(Image.fromarray(np.uint8(image2)))
@@ -57,8 +137,12 @@ class myDataset(Dataset):
 			return image, label
 		else:
 			image, label = self.images[index], self.labels[index]
-			if(self.dtype in ['IMAGENET', 'TINY-IMAGENET']):
+			if(self.dtype in ['IMAGENET']):
 				image = cv2.imread(image[0])
+				# if(self.dtype == 'TINY-IMAGENET'):
+				# 	image = cv2.resize(image, (224, 224), interpolation=cv2.INTER_CUBIC)
+			if(self.dtype == 'TINY-IMAGENET'):
+				image = cv2.imread(image)
 			if(self.onehot):
 				label = self.to_onehot(label)
 			if(self.transform):
@@ -112,15 +196,15 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		else:
 			normalize = transforms.Normalize
 		transform_train = transforms.Compose([
-			# transforms.RandomResizedCrop(224),
+			transforms.RandomResizedCrop(224),
 			transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
 			normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 		])
 
 		transform_test = transforms.Compose([
-			# transforms.RandomResizedCrop(224),
-			# transforms.RandomHorizontalFlip(),
+			transforms.RandomResizedCrop(224),
+			transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
 			normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 		])
@@ -153,7 +237,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 			normalize = transforms.Normalize
 		transform_train = transforms.Compose([
 			# transforms.RandomResizedCrop(224),
-			# transforms.RandomResizedCrop(64),
+			transforms.RandomResizedCrop(64),
 			transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
 			normalize(mean=[0.3975, 0.4481, 0.4802], std=[0.2255, 0.2262, 0.2295]),
@@ -161,29 +245,84 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 
 		transform_test = transforms.Compose([
 			# transforms.RandomResizedCrop(224),
-			# transforms.RandomResizedCrop(64),
-			# transforms.RandomHorizontalFlip(),
+			transforms.RandomResizedCrop(64),
+			transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
 			normalize(mean=[0.3975, 0.4481, 0.4802], std=[0.2255, 0.2262, 0.2295]),
 		])
 
-		traindir = os.path.join(dataPath, 'train')
-		valdir = os.path.join(dataPath, 'validation')
-
-		oriTrainDataset = datasets.ImageFolder(traindir)
-		classes = list(oriTrainDataset.class_to_idx.keys())
+		oriTrainDataset = TinyImageNet(dataPath, split='train')
+		classes = oriTrainDataset.label_texts
 		# clsId2clsName = get_imageNet_classId2Name()
 		num_classes = len(classes)
-		images = oriTrainDataset.imgs
-		labels = torch.Tensor(oriTrainDataset.targets).long()
+		images = oriTrainDataset.image_paths
+		labelDict = oriTrainDataset.labels
+		labels = []
+		for imgName in images:
+			imgName = os.path.basename(imgName)
+			labels.append(labelDict[imgName])
+		labels = torch.Tensor(labels).long()
 		trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType, dtype=dataType)
 		trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers, pin_memory=True)
 
-		oriTestDataset = datasets.ImageFolder(valdir)
-		testImages = oriTestDataset.imgs
-		testLabels = torch.Tensor(oriTestDataset.targets).long()
+		oriTestDataset = TinyImageNet(dataPath, split='validation')
+		testImages = oriTestDataset.image_paths
+		labelDict = oriTestDataset.labels
+		testLabels = []
+		for imgName in testImages:
+			imgName = os.path.basename(imgName)
+			testLabels.append(labelDict[imgName])
+		testLabels = torch.Tensor(testLabels).long()
 		testDataset = myDataset(testImages, testLabels, classes, transform_test, mtype=methodType, dtype=dataType)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers, pin_memory=True)
+
+
+
+		# traindir = os.path.join(dataPath, 'train')
+		# valdir = os.path.join(dataPath, 'validation')
+
+		# # Get label_text_to_number : {'n01443537': 0, 'n01629819': 1, 'n01641577': 2, ...}
+		# with open(os.path.join(dataPath, 'wnids.txt'), 'r') as fp:
+		# 	label_texts = sorted([text.strip() for text in fp.read().splitlines()])
+		# label_text_to_number = {text: i for i, text in enumerate(label_texts)}
+
+		# oriTrainDataset = datasets.ImageFolder(traindir)
+		# classes = list(oriTrainDataset.class_to_idx.keys())
+		# num_classes = len(classes)
+		# images = oriTrainDataset.imgs
+		# # Get imageName_to_classID for training : {'n01443537_0.JPEG': 0, 'n01443537_1.JPEG': 0, ...}
+		# labelDict = {}
+		# for label_text, i in label_text_to_number.items():
+		# 	for cnt in range(500):
+		# 		labelDict['%s_%d.%s' % (label_text, cnt, 'JPEG')] = i
+		# # Generate training labels by labelDict
+		# labels = []
+		# for imgName in images:
+		# 	imgName = imgName[0].split('/')[-1]
+		# 	labels.append(labelDict[imgName])
+		# labels = torch.Tensor(labels).long()
+
+		# trainDataset = myDataset(images, labels, classes, transform_train, mtype=methodType, dtype=dataType)
+		# trainLoader = DataLoader(trainDataset, batch_size=trainBS, shuffle=True, num_workers=numWorkers, pin_memory=True)
+
+		# oriTestDataset = datasets.ImageFolder(valdir)
+		# testImages = oriTestDataset.imgs
+		# # Get imageName_to_classID for validation : {'val_0.JPEG': 107, 'val_1.JPEG': 139, 'val_2.JPEG': 140, ...}
+		# labelDict = {}
+		# with open(os.path.join(valdir, 'val_annotations.txt'), 'r') as f:
+		# 	for line in f.read().splitlines():
+		# 		terms = line.split('\t')
+		# 		file_name, label_text = terms[0], terms[1]
+		# 		labelDict[file_name] = label_text_to_number[label_text]
+		# # Generate validation labels by labelDict
+		# testLabels = []
+		# for imgName in testImages:
+		# 	imgName = imgName[0].split('/')[-1]
+		# 	testLabels.append(labelDict[imgName])
+		# testLabels = torch.Tensor(testLabels).long()
+
+		# testDataset = myDataset(testImages, testLabels, classes, transform_test, mtype=methodType, dtype=dataType)
+		# testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers, pin_memory=True)
 	elif(dataType == 'CIFAR10'):
 		classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 		num_classes = len(classes)
