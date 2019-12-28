@@ -155,6 +155,7 @@ def ROC_plot(sorted_ROC, dataset):
 	plt.legend(loc="lower right") 
 #     plt.savefig("{}/{}-{}{}-ROC.jpg".format(path, dataset, num_examples, suffix))
 	# plt.show()
+	plt.close()
 
 def plot_acc_loss(log, type, modelPath, logger, prefix='', suffix='', printFlag=False):
 	trainAcc = log['acc']['train']
@@ -191,8 +192,8 @@ def plot_acc_loss(log, type, modelPath, logger, prefix='', suffix='', printFlag=
 
 		l_trainLoss, = ax1.plot(trainLoss)
 		l_testLoss, = ax1.plot(valLoss)
-		l_trainAcc, = ax2.plot(trainAcc)
-		l_testAcc, = ax2.plot(valAcc)
+		l_trainAcc, = ax2.plot(trainAcc, marker='x')
+		l_testAcc, = ax2.plot(valAcc, marker='x')
 		plt.legend([l_trainLoss, l_testLoss, l_trainAcc, l_testAcc],
 				  ['Train_loss', 'Test_loss', 'Train_acc', 'Test_acc'])
 		figName = '{}loss_accuracy{}.png'.format(prefix, suffix)
@@ -202,6 +203,7 @@ def plot_acc_loss(log, type, modelPath, logger, prefix='', suffix='', printFlag=
 	if(printFlag):
 		print_log("Figure saved to : {}".format(os.path.join(modelPath, figName)), logger, 'info')
 	# plt.show()
+	plt.close()
 
 def get_roc_data(y_true, y_score, n_classes, rocType='micro'):
 	fpr = dict() 
