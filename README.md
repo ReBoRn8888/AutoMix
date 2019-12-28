@@ -40,6 +40,11 @@ One can simply run the ```AutoMix.py``` to train ImageNet by
 python AutoMix.py --method=baseline --arch=resnet18 --dataset=IMAGENET --data_dir=/media/reborn/Others2/ImageNet --batch_size=32 --lr=0.01 --gpu=0,1 --num_workers=8 --parallel=True --log_path=./automix.log
 ```
 
+## Experimental environment
+- Python 3.6.5
+- PyTorch 1.1.0
+- GTX1080ti (11G)
+
 ## Download the ImageNet dataset
 The ImageNet Large Scale Visual Recognition Challenge (ILSVRC) dataset has 1000 categories and 1.2 million images. 
 
@@ -186,6 +191,59 @@ python AutoMix.py --method=manifoldmixup --arch=resnet18 --dataset=CIFAR100 --da
 python AutoMix.py --method=automix --arch=resnet18 --dataset=CIFAR100 --data_dir=Dataset/CIFAR100 --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300 --kfold=10
 ```
 
+## ImageNet Experiments
+
+- Baseline
+```bash
+python AutoMix.py --method=baseline --arch=resnet18 --dataset=IMAGENET --data_dir=/data/ImageNet --batch_size=25 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=150 --kfold=10
+```
+
+- BC [1]
+```bash
+python AutoMix.py --method=bc --arch=resnet18 --dataset=IMAGENET --data_dir=/data/ImageNet --batch_size=25 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=150 --kfold=10
+```
+
+- Mixup [2]
+```bash
+python AutoMix.py --method=mixup --arch=resnet18 --dataset=IMAGENET --data_dir=/data/ImageNet --batch_size=25 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=150 --kfold=10
+```
+
+- Manifold-Mixup [3]
+```bash
+python AutoMix.py --method=manifoldmixup --arch=resnet18 --dataset=IMAGENET --data_dir=/data/ImageNet --batch_size=25 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=150 --kfold=10
+```
+
+- AutoMix
+```bash
+python AutoMix.py --method=automix --arch=resnet18 --dataset=IMAGENET --data_dir=/data/ImageNet --batch_size=25 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=150 --kfold=10
+```
+
+## Tiny-ImageNet Experiments
+
+- Baseline
+```bash
+python AutoMix.py --method=baseline --arch=resnet18 --dataset=TINY-IMAGENET --data_dir=/data/tiny-imagenet/tiny-imagenet-200 --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300 --kfold=10
+```
+
+- BC [1]
+```bash
+python AutoMix.py --method=bc --arch=resnet18 --dataset=TINY-IMAGENET --data_dir=/data/tiny-imagenet/tiny-imagenet-200 --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300 --kfold=10
+```
+
+- Mixup [2]
+```bash
+python AutoMix.py --method=mixup --arch=resnet18 --dataset=TINY-IMAGENET --data_dir=/data/tiny-imagenet/tiny-imagenet-200 --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300 --kfold=10
+```
+
+- Manifold-Mixup [3]
+```bash
+python AutoMix.py --method=manifoldmixup --arch=resnet18 --dataset=TINY-IMAGENET --data_dir=/data/tiny-imagenet/tiny-imagenet-200 --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300 --kfold=10
+```
+
+- AutoMix
+```bash
+python AutoMix.py --method=automix --arch=resnet18 --dataset=TINY-IMAGENET --data_dir=/data/tiny-imagenet/tiny-imagenet-200 --batch_size=100 --lr=0.1 --gpu=0 --num_workers=8 --parallel=True --epoch=300 --kfold=10
+```
 ## Reference
 
 [1] Tokozume Y , Ushiku Y , Harada T . Between-class Learning for Image Classification[J]. 2017.
