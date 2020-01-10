@@ -156,7 +156,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 			# transforms.RandomResizedCrop(64),
 			transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
-			normalize(mean=[0.3975, 0.4481, 0.4802], std=[0.2255, 0.2262, 0.2295]),
+			# normalize(mean=[0.3975, 0.4481, 0.4802], std=[0.2255, 0.2262, 0.2295]),
 		])
 
 		transform_test = transforms.Compose([
@@ -164,7 +164,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 			# transforms.RandomResizedCrop(64),
 			# transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
-			normalize(mean=[0.3975, 0.4481, 0.4802], std=[0.2255, 0.2262, 0.2295]),
+			# normalize(mean=[0.3975, 0.4481, 0.4802], std=[0.2255, 0.2262, 0.2295]),
 		])
 
 		traindir = os.path.join(dataPath, 'train')
