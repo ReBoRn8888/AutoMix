@@ -229,20 +229,20 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
                         labels = torch.cat([y_mix, labels_a], 0)
                         inputs, targets = shuffle(inputs, labels)
                     elif(method == 'automix' and phase == 'train'):
-                        # inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs, labels)
-                        midIdx = int(len(inputs) / 2)
-                        # inputs_a, inputs_b, labels_a, labels_b = get_shuffled_data(inputs[:midIdx], labels[:midIdx])
-
                         lam = np.random.beta(1.0, 1.0)
-                        # y_mix = lam * labels_a + (1 - lam) * labels_b
-                        # x_mix = unet(torch.cat([lam * inputs_a + (1 - lam) * inputs_b, inputs_a, inputs_b], 1))
+
+                        midIdx = int(len(inputs) / 2)
                         inputs_a = inputs[:midIdx]
                         x_mix, inputs_b, y_mix = unet(inputs_a, labels[:midIdx], lam)
-
                         inputs = torch.cat([x_mix, inputs[midIdx:]], 0)
                         targets = torch.cat([y_mix, labels[midIdx:]], 0)
 
-                        if(i in [0, 1]):
+                        # inputs_a = inputs
+                        # x_mix, inputs_b, y_mix = unet(inputs_a, labels, lam)
+                        # inputs = x_mix
+                        # targets = y_mix
+
+                        if(i in [0]):
                             cmap = 'gray'
                             plt.subplot(221)
                             plt.imshow(inputs_a[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)

@@ -16,13 +16,12 @@ def mix(x, y, alpha=1.0):
 	
 	return mixed_x, y_a, y_b, lam
 
-def mixup_process(out, target_reweighted, lam):
-	indices = np.random.permutation(out.size(0))
-	out = out*lam + out[indices]*(1-lam)
-	target_shuffled_onehot = target_reweighted[indices]
-	target_reweighted = target_reweighted * lam + target_shuffled_onehot * (1 - lam)
+def mixup_process(x, y, lam):
+	indices = np.random.permutation(x.size(0))
+	x_out = x * lam + x[indices] * (1 - lam)
+	y_out = y * lam + y[indices] * (1 - lam)
 
-	return out, target_reweighted
+	return x_out, y_out
 
 def get_lambda(alpha=1.0):
 	'''Return lambda'''

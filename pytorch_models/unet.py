@@ -3,195 +3,140 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-CHANNEL_SIZE = 16
+class DoubleConv(nn.Module):
+	"""(convolution => [BN] => ReLU) * 2"""
 
-def mixup_process(out, target_reweighted, indices, lam):
-    shuffled = out[indices]
-    out = out*lam + shuffled*(1-lam)
-    target_shuffled_onehot = target_reweighted[indices]
-    target_reweighted = target_reweighted * lam + target_shuffled_onehot * (1 - lam)
+	def __init__(self, in_channels, out_channels):
+		super().__init__()
+		self.double_conv = nn.Sequential(
+			nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
+			nn.BatchNorm2d(out_channels),
+			nn.ReLU(inplace=True),
+			nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
+			nn.BatchNorm2d(out_channels),
+			nn.ReLU(inplace=True)
+		)
 
-    return out, target_reweighted
+	def forward(self, x):
+		return self.double_conv(x)
+
+
+class Down(nn.Module):
+	"""Downscaling with maxpool then double conv"""
+
+	def __init__(self, in_channels, out_channels):
+		super().__init__()
+		self.maxpool_conv = nn.Sequential(
+			nn.MaxPool2d(2),
+			DoubleConv(in_channels, out_channels)
+		)
+
+	def forward(self, x):
+		return self.maxpool_conv(x)
+
+
+class Up(nn.Module):
+	"""Upscaling then double conv"""
+
+	def __init__(self, in_channels, out_channels, bilinear=True):
+		super().__init__()
+
+		# if bilinear, use the normal convolutions to reduce the number of channels
+		if bilinear:
+			self.up = nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True)
+		else:
+			self.up = nn.ConvTranspose2d(in_channels // 2, in_channels // 2, kernel_size=2, stride=2)
+
+		self.conv = DoubleConv(in_channels, out_channels)
+
+	def forward(self, x1, x2):
+		x1 = self.up(x1)
+		# input is CHW
+		diffY = torch.tensor([x2.size()[2] - x1.size()[2]])
+		diffX = torch.tensor([x2.size()[3] - x1.size()[3]])
+
+		x1 = F.pad(x1, [diffX // 2, diffX - diffX // 2,
+						diffY // 2, diffY - diffY // 2])
+		# if you have padding issues, see
+		# https://github.com/HaiyongJiang/U-Net-Pytorch-Unstructured-Buggy/commit/0e854509c2cea854e247a9c615f175f76fbb2e3a
+		# https://github.com/xiaopeng-liao/Pytorch-UNet/commit/8ebac70e633bac59fc22bb5195e513d5832fb3bd
+		x = torch.cat([x2, x1], dim=1)
+		return self.conv(x)
+
+
+class OutConv(nn.Module):
+	def __init__(self, in_channels, out_channels):
+		super(OutConv, self).__init__()
+		self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1)
+
+	def forward(self, x):
+		return self.conv(x)
+
+def mixup_process(x, y, lam, indices):
+	x_out = x * lam + x[indices] * (1 - lam)
+	y_out = y * lam + y[indices] * (1 - lam)
+
+	return x_out, y_out
 
 class UNet(nn.Module):
-    def conv_block(self, in_channels, out_channels, kernel_size=3):
-        block = nn.Sequential(
-            nn.Conv2d(in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, stride=1, padding=1),
-            nn.BatchNorm2d(out_channels),
-#             nn.ReLU(True),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(in_channels=out_channels, out_channels=out_channels, kernel_size=kernel_size, stride=1, padding=1),
-            nn.BatchNorm2d(out_channels),
-#             nn.ReLU(True)
-            nn.LeakyReLU(0.2, True),
-        )
-        return block
+	def __init__(self, input_shape, output_shape, num_classes, bilinear=True):
+		super(UNet, self).__init__()
+		self.input_shape = input_shape
+		self.output_shape = output_shape
+		self.num_classes = num_classes
+		self.bilinear = bilinear
 
-    def deconv_block(self, in_channels, mid_channels, out_channels, output_padding=0, kernel_size=3):
-        block = nn.Sequential(
-            nn.Conv2d(in_channels=in_channels, out_channels=mid_channels, kernel_size=kernel_size, stride=1, padding=1),
-            nn.BatchNorm2d(mid_channels),
-#             nn.ReLU(True),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(in_channels=mid_channels, out_channels=mid_channels, kernel_size=kernel_size, stride=1, padding=1),
-            nn.BatchNorm2d(mid_channels),
-#             nn.ReLU(True),
-            nn.LeakyReLU(0.2, True),
-            nn.ConvTranspose2d(in_channels=mid_channels, out_channels=out_channels, kernel_size=2, stride=2, output_padding=output_padding),
-            nn.BatchNorm2d(out_channels),
-#             nn.ReLU(True),
-            nn.LeakyReLU(0.2, True),
-        )
-        return block
+		self.inc = DoubleConv(input_shape[0], 64)
+		self.down1 = Down(64, 128)
+		self.down2 = Down(128, 256)
+		self.down3 = Down(256, 512)
+		self.down4 = Down(512, 512)
+		self.up1 = Up(1024, 256, bilinear)
+		self.up2 = Up(512, 128, bilinear)
+		self.up3 = Up(256, 64, bilinear)
+		self.up4 = Up(128, 64, bilinear)
+		self.outc = OutConv(64, output_shape[0])
 
-    def final_block(self, in_channels, mid_channels, out_channels, kernel_size=3):
-        block = nn.Sequential(
-            nn.Conv2d(in_channels=in_channels, out_channels=mid_channels, kernel_size=kernel_size, stride=1, padding=1),
-            nn.BatchNorm2d(mid_channels),
-#             nn.ReLU(True),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(in_channels=mid_channels, out_channels=mid_channels, kernel_size=kernel_size, stride=1, padding=1),
-            nn.BatchNorm2d(mid_channels),
-#             nn.ReLU(True),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(in_channels=mid_channels, out_channels=out_channels, kernel_size=1, stride=1),
-            nn.BatchNorm2d(out_channels),
-#             nn.ReLU(True),
-            nn.LeakyReLU(0.2, True),
-        )
-        return block
+	def forward(self, x, y, lam):
+		layer_mix = np.random.randint(0, 4)
+		indices = np.random.permutation(x.size(0))
+		x_shuffled = x[indices]
 
-    def crop_and_concat(self, upsampled, bypass, crop=False):
-        if(crop):
-            diffY = bypass.size()[2] - upsampled.size()[2]
-            diffX = bypass.size()[3] - upsampled.size()[3]
-            bypass = F.pad(bypass, (diffX // 2, diffX - diffX//2, diffY // 2, diffY - diffY//2))
-            # c = (bypass.size()[2] - upsampled.size()[2]) // 2
-            # print(c)
-            # bypass = F.pad(bypass, (c, c, c, c))
-        return torch.cat((bypass, upsampled), 1)
+		if(layer_mix == 0):
+			x, y_mix = mixup_process(x, y, lam, indices)
+		x1 = self.inc(x)
+		x2 = self.down1(x1)
 
-    def __init__(self, input_shape, output_shape, num_classes):
-        super(UNet, self).__init__()
-        self.num_classes = num_classes
-        self.input_shape = input_shape
-        self.output_shape = output_shape
-        self.input_size = input_shape[0] * input_shape[1] * input_shape[2]
-        self.output_size = output_shape[0] * output_shape[1] * output_shape[2]
+		if(layer_mix == 1):
+			x2, y_mix = mixup_process(x2, y, lam, indices)
+		x3 = self.down2(x2)
 
-        # self.labelDense = nn.Sequential(
-        #                  nn.Linear(num_classes, self.input_size),
-        #                  # nn.BatchNorm1d(self.input_size),
-        #                  # nn.LeakyReLU(0.2, True),
-        #              )
-        
-        # self.imageDense = nn.Sequential(
-        #                  nn.Linear(self.input_size, self.input_size),
-        #                  nn.BatchNorm1d(self.input_size),
-        #                  nn.LeakyReLU(0.2, True),
-        #              )
-        # self.out = nn.Sequential(
-        #                  nn.Linear(3072, self.output_size),
-        #                  nn.BatchNorm1d(self.output_size),
-        #                  nn.LeakyReLU(0.2, True),
-        #              )
-#         self.dense = nn.Sequential(
-#                          nn.Linear(self.input_size * 2 + num_classes, 1024),
-#                          nn.Linear(1024, self.input_size),
-# #                          nn.LeakyReLU(0.2, True),
-#                      )
-        
-        # self.conv = nn.Conv2d(self.input_shape[0]*2, input_shape[0], kernel_size=3, stride=1, padding=1)
-        
-        # self.conv1 = self.conv_block(input_shape[0], CHANNEL_SIZE)
-        # self.conv2 = self.conv_block(CHANNEL_SIZE, CHANNEL_SIZE * 2)
-        # self.deconv31, self.deconv32 = self.deconv_block(CHANNEL_SIZE * 2, CHANNEL_SIZE * 4, CHANNEL_SIZE * 2),    self.deconv_block(CHANNEL_SIZE * 8, CHANNEL_SIZE * 4, CHANNEL_SIZE * 2, 1)
-        # self.deconv41, self.deconv42 = self.deconv_block(CHANNEL_SIZE * 4, CHANNEL_SIZE * 2, CHANNEL_SIZE),     self.deconv_block(CHANNEL_SIZE * 4, CHANNEL_SIZE * 2, CHANNEL_SIZE, 1)
-        # self.finalLayer = self.final_block(CHANNEL_SIZE * 2, CHANNEL_SIZE, self.output_shape[0])
+		if(layer_mix == 2):
+			x3, y_mix = mixup_process(x3, y, lam, indices)
+		x4 = self.down3(x3)
 
-        self.conv1 = self.conv_block(input_shape[0], CHANNEL_SIZE)
-        self.conv2 = self.conv_block(CHANNEL_SIZE, CHANNEL_SIZE * 2)
-        self.conv3 = self.conv_block(CHANNEL_SIZE * 2, CHANNEL_SIZE * 4)
-        self.conv4 = self.conv_block(CHANNEL_SIZE * 4, CHANNEL_SIZE * 8)
+		if(layer_mix == 3):
+			x4, y_mix = mixup_process(x4, y, lam, indices)
+		x5 = self.down4(x4)
 
-        self.deconv11, self.deconv12 = self.deconv_block(CHANNEL_SIZE * 8, CHANNEL_SIZE * 16, CHANNEL_SIZE * 8),   self.deconv_block(CHANNEL_SIZE * 8, CHANNEL_SIZE * 16, CHANNEL_SIZE * 8, 1)
-        self.deconv21, self.deconv22 = self.deconv_block(CHANNEL_SIZE * 16, CHANNEL_SIZE * 8, CHANNEL_SIZE * 4),   self.deconv_block(CHANNEL_SIZE * 16, CHANNEL_SIZE * 8, CHANNEL_SIZE * 4, 1)
-        self.deconv31, self.deconv32 = self.deconv_block(CHANNEL_SIZE * 8, CHANNEL_SIZE * 4, CHANNEL_SIZE * 2),    self.deconv_block(CHANNEL_SIZE * 8, CHANNEL_SIZE * 4, CHANNEL_SIZE * 2, 1)
-        self.deconv41, self.deconv42 = self.deconv_block(CHANNEL_SIZE * 4, CHANNEL_SIZE * 2, CHANNEL_SIZE),     self.deconv_block(CHANNEL_SIZE * 4, CHANNEL_SIZE * 2, CHANNEL_SIZE, 1)
+		if(layer_mix == 4):
+			x5, y_mix = mixup_process(x5, y, lam, indices)
+		x = self.up1(x5, x4)
 
-        self.finalLayer = self.final_block(CHANNEL_SIZE * 2, CHANNEL_SIZE, self.output_shape[0])
+		if(layer_mix == 5):
+			x, y_mix = mixup_process(x, y, lam, indices)
+		x = self.up2(x, x3)
 
-        self.maxPool = nn.MaxPool2d(kernel_size=2, stride=2)
-        self.avgPool = nn.AvgPool2d(kernel_size=2, stride=2)
+		if(layer_mix == 6):
+			x, y_mix = mixup_process(x, y, lam, indices)
+		x = self.up3(x, x2)
 
-    def forward(self, x, y, lam):
-        # yDense = self.labelDense(y)
-        # x1Dense = self.imageDense(x1.view(x1.shape[0], -1))
-        # x2Dense = self.imageDense(x2.view(x2.shape[0], -1))
-        # x = torch.cat([x1Dense, x2Dense, yDense], 1).view(x1.shape[0], self.output_shape[0]*3, self.output_shape[1], self.output_shape[2])
-        # x = torch.cat([x, x1, x2], 1).view(x1.shape[0], self.output_shape[0]*3, self.output_shape[1], self.output_shape[2])
+		if(layer_mix == 7):
+			x, y_mix = mixup_process(x, y, lam, indices)
+		x = self.up4(x, x1)
 
-        layer_mix = np.random.randint(0, 8)
-        indices = np.random.permutation(x.size(0))
-        shuffled = x[indices]
+		if(layer_mix == 8):
+			x, y_mix = mixup_process(x, y, lam, indices)
+		x_mix = self.outc(x)
 
-        if(layer_mix == 0):
-            x, target_reweighted = mixup_process(x, y, indices, lam)
-        conv1 = self.conv1(x)
-        pool1 = self.maxPool(conv1)
-
-        if(layer_mix == 1):
-            pool1, target_reweighted = mixup_process(pool1, y, indices, lam)
-        conv2 = self.conv2(pool1)
-        pool2 = self.maxPool(conv2)
-
-        if(layer_mix == 2):
-            pool2, target_reweighted = mixup_process(pool2, y, indices, lam)
-        conv3 = self.conv3(pool2)
-        pool3 = self.maxPool(conv3)
-
-        if(layer_mix == 3):
-            pool3, target_reweighted = mixup_process(pool3, y, indices, lam)
-        conv4 = self.conv4(pool3)
-        pool4 = self.maxPool(conv4)
-
-        if(layer_mix == 4):
-            pool4, target_reweighted = mixup_process(pool4, y, indices, lam)
-        bottleneck = self.deconv11(pool4) if pool3.shape[2]%2 == 0 else self.deconv12(pool4)
-        concat1 = self.crop_and_concat(bottleneck, conv4)
-
-        if(layer_mix == 5):
-            concat1, target_reweighted = mixup_process(concat1, y, indices, lam)
-        deconv1 = self.deconv21(concat1) if pool2.shape[2]%2 == 0 else self.deconv22(concat1)
-        concat2 = self.crop_and_concat(deconv1, conv3)
-
-        if(layer_mix == 6):
-            concat2, target_reweighted = mixup_process(concat2, y, indices, lam)
-        deconv2 = self.deconv31(concat2) if pool1.shape[2]%2 == 0 else self.deconv32(concat2)
-        concat3 = self.crop_and_concat(deconv2, conv2)
-
-        if(layer_mix == 7):
-            concat3, target_reweighted = mixup_process(concat3, y, indices, lam)
-        deconv3 = self.deconv41(concat3) if conv1.shape[2]%2 == 0 else self.deconv42(concat3)
-        concat4 = self.crop_and_concat(deconv3, conv1)
-
-        # conv1 = self.conv1(x)
-        # pool1 = self.maxPool(conv1)
-        # conv2 = self.conv2(pool1)
-        # pool2 = self.maxPool(conv2)
-        # # conv3 = self.conv3(pool2)
-        # # pool3 = self.maxPool(conv3)
-        # # conv4 = self.conv4(pool3)
-        # # pool4 = self.maxPool(conv4)
-
-        # bottleneck = self.deconv31(pool2) if pool1.shape[2]%2 == 0 else self.deconv31(pool2)
-        # concat1 = self.crop_and_concat(bottleneck, conv2)
-        # deconv3 = self.deconv41(concat1) if conv1.shape[2]%2 == 0 else self.deconv42(concat1)
-        # concat4 = self.crop_and_concat(deconv3, conv1)
-
-        # output = concat4
-        if(layer_mix == 8):
-            concat4, target_reweighted = mixup_process(concat4, y, indices, lam)
-        output = torch.tanh(self.finalLayer(concat4))
-
-        return output, shuffled, target_reweighted
+		return x_mix, x_shuffled, y_mix
