@@ -79,14 +79,23 @@ def mixup_process(x, y, lam, indices):
 	return x_out, y_out
 
 class UNet(nn.Module):
-	def __init__(self, input_shape, output_shape, num_classes, bilinear=True):
+	def __init__(self, input_shape, output_shape, num_classes, bilinear=False):
 		super(UNet, self).__init__()
 		self.input_shape = input_shape
 		self.output_shape = output_shape
 		self.num_classes = num_classes
 		self.bilinear = bilinear
+		self.input_size = input_shape[0] * input_shape[1] * input_shape[2]
+		self.output_size = output_shape[0] * output_shape[1] * output_shape[2]
 
-		self.inc = DoubleConv(input_shape[0], 64)
+		self.labelDense = nn.Sequential(
+						 nn.Linear(2, input_shape[1] * input_shape[2]),
+						 # nn.BatchNorm1d(self.input_size),
+						 # nn.LeakyReLU(0.2, True),
+					 )
+
+
+		self.inc = DoubleConv(input_shape[0]*2+1, 64)
 		self.down1 = Down(64, 128)
 		self.down2 = Down(128, 256)
 		self.down3 = Down(256, 512)
@@ -97,46 +106,57 @@ class UNet(nn.Module):
 		self.up4 = Up(128, 64, bilinear)
 		self.outc = OutConv(64, output_shape[0])
 
-	def forward(self, x, y, lam):
-		layer_mix = np.random.randint(0, 4)
-		indices = np.random.permutation(x.size(0))
-		x_shuffled = x[indices]
+	def forward(self, x1, x2, label):
+		label = self.labelDense(label).view(x1.shape[0], 1, self.input_shape[1], self.input_shape[2])
+		x = torch.cat([x1, x2, label], 1)
 
-		if(layer_mix == 0):
-			x, y_mix = mixup_process(x, y, lam, indices)
 		x1 = self.inc(x)
 		x2 = self.down1(x1)
-
-		if(layer_mix == 1):
-			x2, y_mix = mixup_process(x2, y, lam, indices)
 		x3 = self.down2(x2)
-
-		if(layer_mix == 2):
-			x3, y_mix = mixup_process(x3, y, lam, indices)
 		x4 = self.down3(x3)
-
-		if(layer_mix == 3):
-			x4, y_mix = mixup_process(x4, y, lam, indices)
 		x5 = self.down4(x4)
-
-		if(layer_mix == 4):
-			x5, y_mix = mixup_process(x5, y, lam, indices)
 		x = self.up1(x5, x4)
-
-		if(layer_mix == 5):
-			x, y_mix = mixup_process(x, y, lam, indices)
 		x = self.up2(x, x3)
-
-		if(layer_mix == 6):
-			x, y_mix = mixup_process(x, y, lam, indices)
 		x = self.up3(x, x2)
-
-		if(layer_mix == 7):
-			x, y_mix = mixup_process(x, y, lam, indices)
 		x = self.up4(x, x1)
-
-		if(layer_mix == 8):
-			x, y_mix = mixup_process(x, y, lam, indices)
 		x_mix = self.outc(x)
 
-		return x_mix, x_shuffled, y_mix
+		return x_mix
+
+		# layer_mix = np.random.randint(0, 4)
+		# if(layer_mix == 0):
+		# 	x, y_mix = mixup_process(x, y, lam, indices)
+		# x1 = self.inc(x)
+		# x2 = self.down1(x1)
+
+		# if(layer_mix == 1):
+		# 	x2, y_mix = mixup_process(x2, y, lam, indices)
+		# x3 = self.down2(x2)
+
+		# if(layer_mix == 2):
+		# 	x3, y_mix = mixup_process(x3, y, lam, indices)
+		# x4 = self.down3(x3)
+
+		# if(layer_mix == 3):
+		# 	x4, y_mix = mixup_process(x4, y, lam, indices)
+		# x5 = self.down4(x4)
+
+		# if(layer_mix == 4):
+		# 	x5, y_mix = mixup_process(x5, y, lam, indices)
+		# x = self.up1(x5, x4)
+
+		# if(layer_mix == 5):
+		# 	x, y_mix = mixup_process(x, y, lam, indices)
+		# x = self.up2(x, x3)
+
+		# if(layer_mix == 6):
+		# 	x, y_mix = mixup_process(x, y, lam, indices)
+		# x = self.up3(x, x2)
+
+		# if(layer_mix == 7):
+		# 	x, y_mix = mixup_process(x, y, lam, indices)
+		# x = self.up4(x, x1)
+
+		# if(layer_mix == 8):
+		# 	x, y_mix = mixup_process(x, y, lam, indices)
+		# x_mix = self.outc(x)
