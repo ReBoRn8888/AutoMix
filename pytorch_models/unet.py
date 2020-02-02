@@ -108,7 +108,7 @@ class UNet(nn.Module):
 
 	def forward(self, x1, x2, label):
 		label = self.labelDense(label).view(x1.shape[0], 1, self.input_shape[1], self.input_shape[2])
-		x = torch.cat([x1, x2, label], 1)
+		x = torch.cat([x1, label, x2], 1)
 
 		x1 = self.inc(x)
 		x2 = self.down1(x1)

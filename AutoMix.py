@@ -284,12 +284,12 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 					# Calculate [reconstruction] loss
 					if(method == 'automix' and phase == 'train'):
-						d1 = norm1(inputs_a, x_mix)
-						d2 = norm1(inputs_b, x_mix)
-						disLoss = (lam * d1 + (1 - lam) * d2).mean()
+						# d1 = norm1(inputs_a, x_mix)
+						# d2 = norm1(inputs_b, x_mix)
+						# disLoss = (lam * d1 + (1 - lam) * d2).mean()
 						# disLoss = (d1 + d2).mean()
-						# disLoss = norm1(lam*inputs_a + (1-lam)*inputs_b, x_mix).mean()
-						loss = clsLoss + disLoss
+						disLoss = norm1(lam*inputs_a + (1-lam)*inputs_b, x_mix).mean()
+						loss = clsLoss + 1.5 * disLoss
 					elif(method == 'adamixup' and phase == 'train'):
 						x_pos = torch.cat([inputs_unseen], 0)
 						y_pos = torch.zeros(len(x_pos), 2).scatter_(1, torch.ones(len(x_pos), 1).long(), 1).to(device)
