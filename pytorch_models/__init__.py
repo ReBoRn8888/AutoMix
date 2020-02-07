@@ -16,3 +16,4 @@ from mynet import *
 from unet import *
 from fnet import *
 from stn import *
+from vae import VAE

@@ -61,4 +61,12 @@ def JS_divergence(P, Q):
 # 	return torch.Tensor(dis)
 
 def norm1(P, Q):
+	if(P.max() != 1 and P.min() != 0):
+		Pmax = P.max()
+		Pmin = P.min()
+		P = (P - Pmin) / (Pmax - Pmin)
+	if(Q.max() != 1 and Q.min() != 0):
+		Qmax = Q.max()
+		Qmin = Q.min()
+		Q = (Q - Qmin) / (Qmax - Qmin)
 	return (P - Q).abs().mean(1).mean(1).mean(1)

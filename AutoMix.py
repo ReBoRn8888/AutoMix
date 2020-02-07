@@ -60,9 +60,10 @@ def parse_args():
 	parser.add_argument('--num_workers', dest='num_workers', default=8, type=int, help='Num of multiple threads')
 	parser.add_argument('--momentum', dest='momentum', default=0.9, type=float, help='Momentum for optimizer')
 	parser.add_argument('--weight_decay', dest='weight_decay', default=5e-4, type=float, help='Weight_decay for optimizer')
-	parser.add_argument('--parallel', dest='parallel', default=True, type=bool, help='Train parallelly with multi-GPUs?')
+	parser.add_argument('--parallel', dest='parallel', default=False, type=bool, help='Train parallelly with multi-GPUs?')
 	parser.add_argument('--log_path', dest='log_path', default=None, type=str, help='Path to the dataset')
 	parser.add_argument('--pretrain', dest='pretrain', default=False, type=bool, help='Whether to use pretrained weights for ResNets.')
+	parser.add_argument('--recon_type', dest='recon_type', default=1, type=int, help='The type of reconstruction loss.')
 
 	args = parser.parse_args()
 	return args
@@ -107,8 +108,8 @@ def eval_total(net, dataLoader):
 	with torch.no_grad():
 		for data in dataLoader:
 			images, labels = data
-			images = images.to(device)
-			labels = labels.to(device)
+			images = images.cuda()
+			labels = labels.cuda()
 			outputs = net(images)
 			predicted = torch.argmax(outputs.data, 1)
 			total += labels.size(0)
@@ -127,8 +128,8 @@ def eval_per_class(net, dataLoader, classes):
 	with torch.no_grad():
 		for data in dataLoader:
 			images, labels = data
-			images = images.to(device)
-			labels = labels.to(device)
+			images = images.cuda()
+			labels = labels.cuda()
 			outputs = net(images)
 			predicted = torch.argmax(outputs, 1)
 			c = predicted.eq(torch.argmax(labels, 1)).cpu().squeeze()
@@ -198,8 +199,8 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 			for i, data in enumerate(dataLoader[phase], 0):
 				inputs, labels = data
-				inputs = inputs.to(device)
-				labels = labels.to(device)
+				inputs = inputs.cuda()
+				labels = labels.cuda()
 				targets = labels
 				lam = None
 				with torch.set_grad_enabled(phase == 'train'):
@@ -212,13 +213,13 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						labels_unseen = torch.cat([labels_a[midIdx:]], 0)
 						inputs_a, inputs_b = inputs_a[:midIdx], inputs_b[:midIdx]
 						labels_a, labels_b = labels_a[:midIdx], labels_b[:midIdx]
-						m1, m2 = torch.randn(inputs_a.shape).to(device), torch.randn(inputs_b.shape).to(device)
+						m1, m2 = torch.randn(inputs_a.shape).cuda(), torch.randn(inputs_b.shape).cuda()
 						inputs = (m1 * inputs_a + m2 * inputs_b) / 2
 
 						gate = PRG_net(inputs)
 						gate = torch.softmax(gate, 1)
 						alpha, alpha2, _ = torch.split(gate, [1, 1, 1], 1)
-						uni = torch.rand([len(inputs_a), 1]).to(device)
+						uni = torch.rand([len(inputs_a), 1]).cuda()
 						weight = alpha + uni * alpha2
 						
 						x_weight = weight.view(len(inputs_a), 1, 1, 1)
@@ -233,10 +234,16 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 						midIdx = int(len(inputs) / 2)
 						inputs_a, labels_a = inputs[:midIdx], labels[:midIdx]
-						indices = np.random.permutation(inputs_a.size(0))
+						indices = torch.randperm(inputs_a.size(0)).cuda()
 						inputs_b, labels_b = inputs_a[indices], labels_a[indices]
-						ll = torch.cat([torch.ones(inputs_a.shape[0], 1)*lam, torch.ones(inputs_a.shape[0], 1)*(1-lam)], 1).to(device)
-						x_mix = unet(inputs_a, inputs_b, ll)
+
+						# ll = labels_a * lam + labels_b * (1 - lam) # VAE
+						# x_mix = unet(torch.cat([inputs_a, inputs_b], 1), ll) # VAE
+						
+						# ll = torch.cat([torch.ones(inputs_a.shape[0], 1)*lam, torch.ones(inputs_a.shape[0], 1)*(1-lam)], 1).cuda() # UNet
+						ll = [lam, 1-lam]
+						x_mix = unet(inputs_a, indices, ll) #UNet
+						
 						y_mix = lam * labels_a + (1 - lam) * labels_b
 						inputs = torch.cat([x_mix, inputs[midIdx:]], 0)
 						targets = torch.cat([y_mix, labels[midIdx:]], 0)
@@ -244,7 +251,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						# indices = np.random.permutation(inputs.size(0))
 						# inputs_a, inputs_b = inputs, inputs[indices]
 						# labels_a, labels_b = labels, labels[indices]
-						# ll = torch.cat([torch.ones(inputs.shape[0], 1)*lam, torch.ones(inputs.shape[0], 1)*(1-lam)], 1).to(device)
+						# ll = torch.cat([torch.ones(inputs.shape[0], 1)*lam, torch.ones(inputs.shape[0], 1)*(1-lam)], 1).cuda()
 						# x_mix = unet(inputs_a, inputs_b, ll)
 						# y_mix = lam * labels_a + (1 - lam) * labels_b
 						# inputs = x_mix
@@ -254,13 +261,15 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 							cmap = 'gray'
 							plt.subplot(221)
 							plt.imshow(inputs_a[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
+							plt.title('{:.2f}'.format(lam))
 							plt.subplot(222)
 							plt.imshow(inputs_b[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
+							plt.title('{:.2f}'.format(1-lam))
 							plt.subplot(223)
-							plt.title('{:.4f}-unet'.format(lam))
+							plt.title('unet')
 							plt.imshow(x_mix[0].permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
 							plt.subplot(224)
-							plt.title('{:.4f}-mixup'.format(lam))
+							plt.title('mixup')
 							plt.imshow((inputs_a[0] * lam + inputs_b[0] * (1 - lam)).permute(1, 2, 0).squeeze().cpu().detach().numpy(), cmap=cmap)
 							plt.savefig("out/epoch-{}[{}].jpg".format(epoch, i))
 							plt.show()
@@ -284,17 +293,24 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 					# Calculate [reconstruction] loss
 					if(method == 'automix' and phase == 'train'):
-						# d1 = norm1(inputs_a, x_mix)
-						# d2 = norm1(inputs_b, x_mix)
-						# disLoss = (lam * d1 + (1 - lam) * d2).mean()
+						if(reconType == 1):
+							d1 = norm1(inputs_a, x_mix)
+							d2 = norm1(inputs_b, x_mix)
+							disLoss = (lam * d1 + (1 - lam) * d2).mean()
+						elif(reconType == 2):
+							d1 = norm1(inputs_a, x_mix)
+							d2 = norm1(inputs_b, x_mix)
+							disLoss = ((1 - lam) * d1 + lam * d2).mean()
+						elif(reconType == 3):
+							disLoss = norm1(lam*inputs_a + (1-lam)*inputs_b, x_mix).mean()
+
 						# disLoss = (d1 + d2).mean()
-						disLoss = norm1(lam*inputs_a + (1-lam)*inputs_b, x_mix).mean()
 						loss = clsLoss + 1.5 * disLoss
 					elif(method == 'adamixup' and phase == 'train'):
 						x_pos = torch.cat([inputs_unseen], 0)
-						y_pos = torch.zeros(len(x_pos), 2).scatter_(1, torch.ones(len(x_pos), 1).long(), 1).to(device)
+						y_pos = torch.zeros(len(x_pos), 2).scatter_(1, torch.ones(len(x_pos), 1).long(), 1).cuda()
 						x_neg = torch.cat([x_mix], 0)
-						y_neg = torch.zeros(len(x_neg), 2).scatter_(1, torch.zeros(len(x_neg), 1).long(), 1).to(device)
+						y_neg = torch.zeros(len(x_neg), 2).scatter_(1, torch.zeros(len(x_neg), 1).long(), 1).cuda()
 						x_bin = torch.cat([x_pos, x_neg], 0)
 						y_bin = torch.cat([y_pos, y_neg], 0)
 						x_bin, y_bin = shuffle(x_bin, y_bin)
@@ -398,14 +414,15 @@ def get_model(netType, methodType, num_classes, shape, pretrain):
 		net = PreActResNet18(input_shape=shape, 
 							 num_classes=num_classes)
 
-	net = net.to(device)
+	net = net.cuda()
 	outputNet = [net]
 	parameters = [{'params': net.parameters()}]
 	print_log('Backbone : [{}]\n{}'.format(netType, summary(model=net, input_size=shape)), logger, 'info')
 	
 	if(methodType == 'automix'):
 		unet = UNet(input_shape=(shape[0], shape[1], shape[2]), output_shape=shape, num_classes=num_classes)
-		unet = unet.to(device)
+		# unet = VAE(shape=shape, latent_size=1024, conditional=True, num_labels=num_classes)
+		unet = unet.cuda()
 		# print_log('UNet : {}'.format(summary(model=unet, input_size=(shape[0], shape[1], shape[2]))), logger, 'info')
 		outputNet.append(unet)
 		parameters.append({'params': unet.parameters()})
@@ -422,12 +439,12 @@ def get_model(netType, methodType, num_classes, shape, pretrain):
 		elif(netType == 'preactresnet18'):
 			PRG_net = PreActResNet18(input_shape=shape, 
 									 num_classes=3)
-		PRG_net = PRG_net.to(device)
+		PRG_net = PRG_net.cuda()
 		outputNet.append(PRG_net)
 		parameters.append({'params': PRG_net.parameters()})
 #         summary(model=PRG_net, input_size=shape)
 
-	if(device.type == 'cuda'):
+	if(torch.cuda.is_available()):
 		cudnn.benchmark = True
 		if(args.parallel):
 			print_log('DataParallel : {}'.format(args.parallel), logger, 'info')
@@ -439,18 +456,19 @@ def get_model(netType, methodType, num_classes, shape, pretrain):
 if(__name__ == '__main__'):
 	# torch.autograd.set_detect_anomaly(True)
 	defaultSetting = {
-				'IMAGENET'      : ['/data/ImageNet', 300, [75, 150, 225, 275]],
-				'TINY-IMAGENET' : ['/data/tiny-imagenet/tiny-imagenet-200', 300, [75, 150, 225, 275]],
-				'CIFAR10'       : ['Dataset/cifar10', 300, [75, 150, 225]],
-				'CIFAR100'      : ['Dataset/cifar100', 300, [75, 150, 225]],
-				'MNIST'         : ['Dataset/mnist', 100, [50, 75]],
-				'FASHION-MNIST' : ['Dataset/fashion-mnist', 100, [50, 75]],
-				'GTSRB'         : ['Dataset/GTSRB', 100, [50, 75]],
-				'MIML'          : ['Dataset/MIML', 100, [50, 75]],
-				}
+	    'IMAGENET'      : ['/data/ImageNet', 300, [75, 150, 225, 275]],
+	    'TINY-IMAGENET' : ['/data/tiny-imagenet/tiny-imagenet-200', 300, [75, 150, 225, 275]],
+	    'CIFAR10'       : ['Dataset/CIFAR10', 300, [75, 150, 225]],
+	    'CIFAR100'      : ['Dataset/CIFAR100', 300, [75, 150, 225]],
+	    'MNIST'         : ['Dataset', 100, [50, 75]],
+	    'FASHION-MNIST' : ['Dataset', 100, [50, 75]],
+	    'GTSRB'         : ['Dataset/GTSRB', 100, [50, 75]],
+	    'MIML'          : ['Dataset/MIML', 100, [50, 75]],
+	    }
 
 	args = parse_args()
 
+	reconType = args.recon_type
 	dataset = str(args.dataset).upper()
 	method = str(args.method).lower()
 	arch = str(args.arch).lower()
@@ -493,7 +511,8 @@ if(__name__ == '__main__'):
 		os.environ["CUDA_VISIBLE_DEVICES"] = str(args.gpu)
 		print_log('CUDA_VISIBLE_DEVICES : {}'.format(os.environ["CUDA_VISIBLE_DEVICES"]), logger, 'info')
 	print_log('torch.cuda.is_available : {}'.format(torch.cuda.is_available()), logger, 'info')
-	device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+	# device = torch.device("cuda:{}".format(str(args.gpu)) if torch.cuda.is_available() else "cpu")
+	# print("Device(s) : {}".format(device))
 
 	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape = get_dataset(dataset, method, dataDir, trainBS, testBS, numWorkers, sampleNum)
 	
@@ -521,16 +540,16 @@ if(__name__ == '__main__'):
 		else:
 			net = nets[0]
 
-		softmax = nn.Softmax(dim=1).to(device)
-		sigmoid = nn.Sigmoid().to(device)
+		softmax = nn.Softmax(dim=1).cuda()
+		sigmoid = nn.Sigmoid().cuda()
 		if(criterionType == 'bceloss'):
-			criterion = nn.BCELoss().to(device)
+			criterion = nn.BCELoss().cuda()
 		elif(criterionType == 'myloss'):
-			criterion = myLoss(method).to(device)
+			criterion = myLoss(method).cuda()
 		elif(criterionType == 'mseloss'):
-			criterion = nn.MSELoss().to(device)
+			criterion = nn.MSELoss().cuda()
 		elif(criterionType == 'celoss'):
-			criterion = nn.CrossEntropyLoss().to(device)
+			criterion = nn.CrossEntropyLoss().cuda()
 
 		optimizer = optim.SGD(parameters, lr=learning_rate, momentum=momentum, weight_decay=weight_decay, nesterov=True)
 	#     optimizer = optim.Adam(parameters, lr=0.0002, betas=(0.5, 0.999))

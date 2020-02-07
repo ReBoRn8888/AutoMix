@@ -140,7 +140,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		oriTestDataset = datasets.ImageFolder(valdir)
 		testImages = oriTestDataset.imgs
 		testLabels = torch.Tensor(oriTestDataset.targets).long()
-		testDataset = myDataset(testImages, testLabels, classes, transform_test, mtype=methodType, dtype=dataType)
+		testDataset = myDataset(testImages, testLabels, classes, transform_test, mtype='baseline', dtype=dataType)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers, pin_memory=True)
 	elif(dataType == 'TINY-IMAGENET'):
 		shape = (3, 64, 64)
@@ -182,7 +182,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		oriTestDataset = datasets.ImageFolder(valdir)
 		testImages = oriTestDataset.imgs
 		testLabels = torch.Tensor(oriTestDataset.targets).long()
-		testDataset = myDataset(testImages, testLabels, classes, transform_test, mtype=methodType, dtype=dataType)
+		testDataset = myDataset(testImages, testLabels, classes, transform_test, mtype='baseline', dtype=dataType)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers, pin_memory=True)
 	elif(dataType == 'CIFAR10'):
 		classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
