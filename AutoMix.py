@@ -178,7 +178,7 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 	best_acc = 0.0
 	start = time.time()
 	for epoch in tqdm(range(n_epochs), desc='Epoch'):  # loop over the dataset multiple times
-		print_log('Epoch {}/{}, lr = {}  [best_acc = {:.4f}%]'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr'], best_acc), logger, 'info')
+		print_log('Epoch {}/{}, lr = {:.5f}  [best_acc = {:.4f}%]'.format(epoch+1, n_epochs, optimizer.param_groups[0]['lr'], best_acc), logger, 'info')
 		print_log('-' * 10, logger, 'info')
 		epochStart = time.time()
 		for phase in ['train', 'val']:
@@ -195,9 +195,12 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 			else:
 				# Init AverageMeter for single-label classification
 				top1 = AverageMeter()
-				top5 = AverageMeter()   
+				top5 = AverageMeter()
+				total = 0
+				correct = 0
 
 			for i, data in enumerate(dataLoader[phase], 0):
+				optimizer.zero_grad()
 				inputs, labels = data
 				inputs = inputs.cuda()
 				labels = labels.cuda()
@@ -230,23 +233,34 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						labels = torch.cat([y_mix, labels_a], 0)
 						inputs, targets = shuffle(inputs, labels)
 					elif(method == 'automix' and phase == 'train'):
-						lam = np.random.beta(1.0, 1.0)
-
 						midIdx = int(len(inputs) / 2)
 						inputs_a, labels_a = inputs[:midIdx], labels[:midIdx]
 						indices = torch.randperm(inputs_a.size(0)).cuda()
 						inputs_b, labels_b = inputs_a[indices], labels_a[indices]
 
-						# ll = labels_a * lam + labels_b * (1 - lam) # VAE
-						# x_mix = unet(torch.cat([inputs_a, inputs_b], 1), ll) # VAE
-						
-						# ll = torch.cat([torch.ones(inputs_a.shape[0], 1)*lam, torch.ones(inputs_a.shape[0], 1)*(1-lam)], 1).cuda() # UNet
+						lam = np.random.beta(1.0, 1.0)
 						ll = [lam, 1-lam]
 						x_mix = unet(inputs_a, indices, ll) #UNet
+						x_mix = mean_std_norm(x_mix, mean, std)
 						
 						y_mix = lam * labels_a + (1 - lam) * labels_b
 						inputs = torch.cat([x_mix, inputs[midIdx:]], 0)
 						targets = torch.cat([y_mix, labels[midIdx:]], 0)
+
+						# -------------------------------------------------------
+
+						# lam = np.random.beta(1.0, 1.0)
+						# ll = [lam, 1-lam]
+						# indices = torch.randperm(inputs.size(0)).cuda()
+						# inputs_a, inputs_b = inputs, inputs[indices]
+						# labels_a, labels_b = labels, labels[indices]
+						# x_mix = unet(inputs_a, indices, ll)
+						# x_mix = mean_std_norm(x_mix, mean, std)
+						# y_mix = lam * labels_a + (1 - lam) * labels_b
+						# inputs = x_mix
+						# targets = y_mix
+
+						# -------------------------------------------------------
 
 						# indices = np.random.permutation(inputs.size(0))
 						# inputs_a, inputs_b = inputs, inputs[indices]
@@ -296,13 +310,18 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 						if(reconType == 1):
 							d1 = norm1(inputs_a, x_mix)
 							d2 = norm1(inputs_b, x_mix)
+							# d1 = norm2(inputs_a, x_mix)
+							# d2 = norm2(inputs_b, x_mix)
 							disLoss = (lam * d1 + (1 - lam) * d2).mean()
 						elif(reconType == 2):
 							d1 = norm1(inputs_a, x_mix)
 							d2 = norm1(inputs_b, x_mix)
+							# d1 = norm2(inputs_a, x_mix)
+							# d2 = norm2(inputs_b, x_mix)
 							disLoss = ((1 - lam) * d1 + lam * d2).mean()
 						elif(reconType == 3):
 							disLoss = norm1(lam*inputs_a + (1-lam)*inputs_b, x_mix).mean()
+							# disLoss = norm2(lam*inputs_a + (1-lam)*inputs_b, x_mix).mean()
 
 						# disLoss = (d1 + d2).mean()
 						loss = clsLoss + 1.5 * disLoss
@@ -323,7 +342,6 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 
 					# Feed backward
 					if(phase == 'train'):
-						optimizer.zero_grad()
 						loss.backward()
 						optimizer.step()
 
@@ -335,17 +353,22 @@ def train_val(optimizer, n_epochs, trainDataset, trainLoader, valDataset, valLoa
 					# Calculate mAP for multi-label classification
 					outputs = sigmoid(outputs)
 					PR_results = np.concatenate([PR_results, outputs.cpu().detach().numpy()], 0)
-					PR_labels = np.concatenate([PR_labels, labels.cpu().detach().numpy()], 0)
+					PR_labels = np.concatenate([PR_labels, targets.cpu().detach().numpy()], 0)
 					precision = mAP_evaluation(PR_results, PR_labels, num_classes)
 					sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}%\r'
 						 .format(i+1, iterNum[phase], time.time() - epochStart, loss.item(), losses.avg, precision*100))
 				else:
 					# Calculate top1/5 accuracy for single-label classification
-					prec1, prec5 = accuracy(outputs, torch.argmax(labels, 1), topk=(1, 5))
+					prec1, prec5 = accuracy(outputs, torch.argmax(targets, 1), topk=(1, 5))
+					# _, predicted = outputs.max(1)
+					# total += targets.size(0)
+					# correct += predicted.eq(torch.argmax(targets, 1)).sum().item()
 					top1.update(prec1.item(), inputs.size(0))
 					top5.update(prec5.item(), inputs.size(0))
-					sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}% ({:.0f}/{:.0f})\r'
-						 .format(i+1, iterNum[phase], time.time() - epochStart, loss.item(), losses.avg, prec1/inputs.size(0)*100, top1.sum, top1.count))
+					# sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f} ({:.4f})\tAcc= {:.2f}% ({}.{}:{}/{}.{})\r'
+					# 	 .format(i+1, iterNum[phase], time.time() - epochStart, loss.item(), losses.avg, top1.sum/top1.count*100, int(top1.sum), int(correct), int(top1.sum)==int(correct), top1.count, total))
+					sys.stdout.write('Iter: {} / {} ({:.0f}s)\tLoss= {:.4f}\tAcc= {:.2f}% ({:.0f}/{:.0f})\r'
+						 .format(i+1, iterNum[phase], time.time() - epochStart, losses.avg, top1.sum/top1.count*100, top1.sum, top1.count))
 				sys.stdout.flush()
 			sys.stdout.write('                                                                                                  \r')
 			sys.stdout.flush()
@@ -514,8 +537,9 @@ if(__name__ == '__main__'):
 	# device = torch.device("cuda:{}".format(str(args.gpu)) if torch.cuda.is_available() else "cpu")
 	# print("Device(s) : {}".format(device))
 
-	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape = get_dataset(dataset, method, dataDir, trainBS, testBS, numWorkers, sampleNum)
-	
+	trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, mean, std = get_dataset(dataset, method, dataDir, trainBS, testBS, numWorkers, sampleNum)
+	mean = torch.Tensor(mean).view(shape[0], 1, 1).cuda()
+	std = torch.Tensor(std).view(shape[0], 1, 1).cuda()
 	# it = iter(trainLoader)
 	# a, b = it.next()
 	# print(a.shape, b.shape)

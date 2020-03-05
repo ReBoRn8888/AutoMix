@@ -105,6 +105,8 @@ def cal_mean_std(images):
 def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sampleNum=None):
 	if(dataType == 'IMAGENET'):
 		shape = (3, 224, 224)
+		mean=[0.485, 0.456, 0.406]
+		std=[0.229, 0.224, 0.225]
 
 		# Data loading code
 		if(methodType == 'bc'):
@@ -112,17 +114,19 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		else:
 			normalize = transforms.Normalize
 		transform_train = transforms.Compose([
-			# transforms.RandomResizedCrop(224),
+			transforms.RandomResizedCrop(224),
 			transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
-			normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+			normalize(mean=mean, std=std),
 		])
 
 		transform_test = transforms.Compose([
+			transforms.Scale(256),
+			transforms.CenterCrop(224),
 			# transforms.RandomResizedCrop(224),
 			# transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
-			normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
+			normalize(mean=mean, std=std),
 		])
 
 		traindir = os.path.join(dataPath, 'train')
@@ -145,6 +149,9 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 	elif(dataType == 'TINY-IMAGENET'):
 		shape = (3, 64, 64)
 		# shape = (3, 224, 224)
+		mean=[0.3975, 0.4481, 0.4802]
+		std=[0.2255, 0.2262, 0.2295]
+
 
 		# Data loading code
 		if(methodType == 'bc'):
@@ -156,7 +163,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 			# transforms.RandomResizedCrop(64),
 			transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
-			# normalize(mean=[0.3975, 0.4481, 0.4802], std=[0.2255, 0.2262, 0.2295]),
+			normalize(mean=mean, std=std),
 		])
 
 		transform_test = transforms.Compose([
@@ -164,7 +171,7 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 			# transforms.RandomResizedCrop(64),
 			# transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
-			# normalize(mean=[0.3975, 0.4481, 0.4802], std=[0.2255, 0.2262, 0.2295]),
+			normalize(mean=mean, std=std),
 		])
 
 		traindir = os.path.join(dataPath, 'train')
@@ -188,6 +195,8 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		classes = ('plane', 'car', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
 		num_classes = len(classes)
 		shape = (3, 32, 32)
+		mean = [0.4914, 0.4822, 0.4465]
+		std = [0.2023, 0.1994, 0.2010]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -197,12 +206,12 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 			transforms.RandomHorizontalFlip(),
 			transforms.RandomCrop(32, padding=2),
 			transforms.ToTensor(),
-			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
+			normalize(mean=mean, std=std),
 		])
 
 		transform_test = transforms.Compose([
 			transforms.ToTensor(),
-			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
+			normalize(mean=mean, std=std),
 		])
 
 		# Load training data
@@ -234,6 +243,8 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		classes = ['{}'.format(i) for i in range(100)]
 		num_classes = len(classes)
 		shape = (3, 32, 32)
+		mean=[0.4914, 0.4822, 0.4465]
+		std=[0.2023, 0.1994, 0.2010]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -243,12 +254,12 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 			transforms.RandomHorizontalFlip(),
 			transforms.RandomCrop(32, padding=2),
 			transforms.ToTensor(),
-			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
+			normalize(mean=mean, std=std),
 		])
 
 		transform_test = transforms.Compose([
 			transforms.ToTensor(),
-			normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2023, 0.1994, 0.2010]),
+			normalize(mean=mean, std=std),
 		])
 
 		# Load training data
@@ -280,6 +291,8 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		classes = ['{}'.format(i) for i in range(43)]
 		num_classes = len(classes)
 		shape = (3, 28, 28)
+		mean=[0.3352, 0.3173, 0.3584]
+		std=[0.2662, 0.2563, 0.2727]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -288,11 +301,11 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		transform_train = transforms.Compose([
 			transforms.RandomCrop(28, padding=4),
 			transforms.ToTensor(),
-			normalize(mean=[0.3352, 0.3173, 0.3584], std=[0.2662, 0.2563, 0.2727]),
+			normalize(mean=mean, std=std),
 		])
 		transform_test = transforms.Compose([
 			transforms.ToTensor(),
-			normalize(mean=[0.3352, 0.3173, 0.3584], std=[0.2662, 0.2563, 0.2727]),
+			normalize(mean=mean, std=std),
 		])
 
 		# Load training data
@@ -409,6 +422,8 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		classes = ['{}'.format(i) for i in range(10)]
 		num_classes = len(classes)
 		shape = (1, 28, 28)
+		mean = [0.1307,]
+		std = [0.3081,]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -417,11 +432,11 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		transform_train = transforms.Compose([
 			transforms.RandomCrop(28, padding=4),
 			transforms.ToTensor(),
-			normalize(mean=[0.1307,], std=[0.3081,]),
+			normalize(mean=mean, std=std),
 		])
 		transform_test = transforms.Compose([
 			transforms.ToTensor(),
-			normalize(mean=[0.1307,], std=[0.3081,]),
+			normalize(mean=mean, std=std),
 		])
 
 		# Load training data
@@ -453,6 +468,8 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		classes = ['{}'.format(i) for i in range(10)]
 		num_classes = len(classes)
 		shape = (1, 28, 28)
+		mean = [0.2860,]
+		std = [0.3530,]
 
 		if(methodType == 'bc'):
 			normalize = ZeroMean
@@ -462,11 +479,11 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 			transforms.RandomCrop(28, padding=4),
 			transforms.RandomHorizontalFlip(),
 			transforms.ToTensor(),
-			normalize(mean=[0.2860,], std=[0.3530,]),
+			normalize(mean=mean, std=std),
 		])
 		transform_test = transforms.Compose([
 			transforms.ToTensor(),
-			normalize(mean=[0.2860,], std=[0.3530,]),
+			normalize(mean=mean, std=std),
 		])
 
 		# Load training data
@@ -495,4 +512,4 @@ def get_dataset(dataType, methodType, dataPath, trainBS, testBS, numWorkers, sam
 		testDataset = myDataset(testImages, testLabels, classes, transform_test)
 		testLoader = DataLoader(testDataset, batch_size=testBS, shuffle=False, num_workers=numWorkers)
 	
-	return trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape
+	return trainDataset, trainLoader, testDataset, testLoader, classes, num_classes, shape, mean, std

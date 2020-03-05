@@ -6,8 +6,9 @@ import numpy as np
 class DoubleConv(nn.Module):
 	"""(convolution => [BN] => ReLU) * 2"""
 
-	def __init__(self, in_channels, out_channels):
+	def __init__(self, in_channels, out_channels, attention=False):
 		super().__init__()
+		self.attention = attention
 		self.double_conv = nn.Sequential(
 			nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1),
 			nn.BatchNorm2d(out_channels),
@@ -18,9 +19,15 @@ class DoubleConv(nn.Module):
 			# nn.ReLU(inplace=True)
 			nn.LeakyReLU(0.2, True),
 		)
+		self.se = SEModule(out_channels)
 
 	def forward(self, x):
-		return self.double_conv(x)
+		out = self.double_conv(x)
+		if(self.attention):
+			out = self.se(out)
+			# out, weights = self.se(out)
+			# return out, weights
+		return out
 
 
 class Down(nn.Module):
@@ -30,7 +37,7 @@ class Down(nn.Module):
 		super().__init__()
 		self.maxpool_conv = nn.Sequential(
 			nn.MaxPool2d(2),
-			DoubleConv(in_channels, out_channels)
+			DoubleConv(in_channels, out_channels, True)
 		)
 
 	def forward(self, x):
@@ -71,8 +78,11 @@ class OutConv(nn.Module):
 		super(OutConv, self).__init__()
 		self.conv = nn.Sequential(
 				nn.Conv2d(in_channels, out_channels, kernel_size=1),
+				nn.BatchNorm2d(out_channels),
+				# nn.ReLU(inplace=True),
+				# nn.LeakyReLU(0.2, True),
 				# nn.Sigmoid(),
-				nn.Tanh(),
+				# nn.Tanh(),
 			)
 
 	def forward(self, x):
@@ -92,8 +102,8 @@ class SEModule(nn.Module):
 		self.globalAvgPool = nn.AdaptiveAvgPool2d(1)
 		self.fc = nn.Sequential(
 				nn.Linear(channel, channel//reduction, bias=False),
-				# nn.ReLU(True),
-				nn.LeakyReLU(0.2, True),
+				nn.ReLU(True),
+				# nn.LeakyReLU(0.2, True),
 				nn.Linear(channel//reduction, channel, bias=False),
 				nn.Sigmoid()
 			)
@@ -102,7 +112,7 @@ class SEModule(nn.Module):
 		batchSize, channel, _, _ = x.size()
 		y = self.globalAvgPool(x).view(batchSize, channel)
 		y = self.fc(y).view(batchSize, channel, 1, 1)
-		return y
+		return x * y.expand_as(x)
 
 def mixup_process(x, y, lam, indices):
 	x_out = x * lam + x[indices] * (1 - lam)
@@ -121,7 +131,7 @@ class UNet(nn.Module):
 		self.output_size = output_shape[0] * output_shape[1] * output_shape[2]
 
 		# linearSize = 1024
-		channelSize = 32
+		channelSize = 16
 
 		self.merge5 = DoubleConv(channelSize*16, channelSize*8)
 		self.merge4 = DoubleConv(channelSize*16, channelSize*8)
@@ -129,33 +139,7 @@ class UNet(nn.Module):
 		self.merge2 = DoubleConv(channelSize*4, channelSize*2)
 		self.merge1 = DoubleConv(channelSize*2, channelSize)
 
-		# self.dense1 = nn.Sequential(
-		# 			nn.Linear(channelSize*input_shape[1]*input_shape[2], channelSize),
-		# 			nn.BatchNorm1d(channelSize),
-		# 			nn.ReLU(True),
-		# 		)
-		# self.dense2 = nn.Sequential(
-		# 			nn.Linear(channelSize*2*round(input_shape[1]//2)*round(input_shape[2]//2), channelSize*2),
-		# 			nn.BatchNorm1d(channelSize*2),
-		# 			nn.ReLU(True),
-		# 		)
-		# self.dense3 = nn.Sequential(
-		# 			nn.Linear(channelSize*4*round(input_shape[1]//4)*round(input_shape[2]//4), channelSize*4),
-		# 			nn.BatchNorm1d(channelSize*4),
-		# 			nn.ReLU(True),
-		# 		)
-		# self.dense4 = nn.Sequential(
-		# 			nn.Linear(channelSize*8*round(input_shape[1]//8)*round(input_shape[2]//8), channelSize*8),
-		# 			nn.BatchNorm1d(channelSize*8),
-		# 			nn.ReLU(True),
-		# 		)
-		# self.dense5 = nn.Sequential(
-		# 			nn.Linear(channelSize*8*round(input_shape[1]//16)*round(input_shape[2]//16), channelSize*8),
-		# 			nn.BatchNorm1d(channelSize*8),
-		# 			nn.ReLU(True),
-		# 		)
-
-		self.inc = DoubleConv(input_shape[0], channelSize)
+		self.inc = DoubleConv(input_shape[0], channelSize, True)
 		# self.inc = DoubleConv(input_shape[0]*2+1, channelSize)
 		self.down1 = Down(channelSize, channelSize*2)
 		self.down2 = Down(channelSize*2, channelSize*4)
@@ -167,60 +151,37 @@ class UNet(nn.Module):
 		self.up4 = Up(channelSize*2, channelSize, bilinear)
 		self.outc = OutConv(channelSize, output_shape[0])
 
-		# self.globalAvgPool = nn.AdaptiveAvgPool2d((1, 1))
-		self.SEmodule1 = SEModule(channelSize)
-		self.SEmodule2 = SEModule(channelSize*2)
-		self.SEmodule3 = SEModule(channelSize*4)
-		self.SEmodule4 = SEModule(channelSize*8)
-		self.SEmodule5 = SEModule(channelSize*8)
-
-		# self.SEmodule2 = nn.Sequential(
-		# 			nn.AdaptiveAvgPool2d((1, 1)),
-		# 			Reshape((-1, channelSize*2)),
-		# 			nn.Linear(channelSize*2, channelSize*2//16),
-		# 			nn.ReLU(True),
-		# 			nn.Linear(channelSize*2//16, channelSize*2),
-		# 			nn.Sigmoid(),
-		# 		)
-		# self.SEmodule3 = nn.Sequential(
-		# 			nn.AdaptiveAvgPool2d((1, 1)),
-		# 			Reshape((-1, channelSize*4)),
-		# 			nn.Linear(channelSize*4, channelSize*4//16),
-		# 			nn.ReLU(True),
-		# 			nn.Linear(channelSize*4//16, channelSize*4),
-		# 			nn.Sigmoid(),
-		# 		)
-		# self.SEmodule4 = nn.Sequential(
-		# 			nn.AdaptiveAvgPool2d((1, 1)),
-		# 			Reshape((-1, channelSize*8)),
-		# 			nn.Linear(channelSize*8, channelSize*8//16),
-		# 			nn.ReLU(True),
-		# 			nn.Linear(channelSize*8//16, channelSize*8),
-		# 			nn.Sigmoid(),
-		# 		)
-		# self.SEmodule5 = nn.Sequential(
-		# 			nn.AdaptiveAvgPool2d((1, 1)),
-		# 			Reshape((-1, channelSize*8)),
-		# 			nn.Linear(channelSize*8, channelSize*8//16),
-		# 			nn.ReLU(True),
-		# 			nn.Linear(channelSize*8//16, channelSize*8),
-		# 			nn.Sigmoid(),
-		# 		)
-
-		# Backup
-		# self.inc = DoubleConv(input_shape[0], channelSize)
-		# self.down1 = Down(channelSize, channelSize*2)
-		# self.down2 = Down(channelSize*2, channelSize*4)
-		# self.down3 = Down(channelSize*4, channelSize*8)
-		# self.down4 = Down(channelSize*8, channelSize*8)
-		# self.up1 = Up(channelSize*16, channelSize*4, bilinear)
-		# self.up2 = Up(channelSize*8, channelSize*2, bilinear)
-		# self.up3 = Up(channelSize*4, channelSize, bilinear)
-		# self.up4 = Up(channelSize*2, channelSize, bilinear)
-		# self.outc = OutConv(channelSize, output_shape[0])
-
-	def clean(self, features, logits, indices, label):
+	# def clean(self, features, logits, indices, label):
+	def clean(self, features, indices, label):
 		r1, r2 = label
+		
+		# a = features * r1
+		# b = features[indices] * r2
+				
+		# --------------------------------------------------------------------------------
+
+		ones = torch.ones(round(features.shape[1] * r1)).cuda()
+		zeros = torch.zeros(round(features.shape[1] * r2)).cuda()
+		mask = torch.cat([ones, zeros])
+		ind = torch.randperm(len(mask))
+		mask = mask[ind]
+		mask2 = torch.ones(len(mask)).cuda() - mask
+		a = features * mask.view(1, features.shape[1], 1, 1)
+		b = features[indices] * mask2.view(1, features.shape[1], 1, 1)
+
+		# --------------------------------------------------------------------------------
+		
+		# logits = torch.sigmoid(features)
+		# ones = torch.ones(features.shape).cuda()
+		# zeros = torch.zeros(features.shape).cuda()
+		# maxx = torch.max(features, 1).values.view(features.shape[0], 1, features.shape[2], features.shape[3])
+		# minn = torch.min(features, 1).values.view(features.shape[0], 1, features.shape[2], features.shape[3])
+		# logits = (features - minn) / (maxx - minn)
+		# a = features * torch.where(logits >= r2, ones, zeros).expand_as(features) * r1
+		# b = features[indices] * torch.where(logits[indices] >= r1, ones, zeros).expand_as(features) * r2
+		
+		# --------------------------------------------------------------------------------
+		
 		# avg = self.globalAvgPool(logits).view(logits.shape[0], logits.shape[1])
 		# num1 = round(logits.shape[1] * r1)
 		# num2 = logits.shape[1] - num1
@@ -229,20 +190,24 @@ class UNet(nn.Module):
 		# for i, idx in enumerate(topk1[:, :num1]):
 		#     x[i, idx] = 1
 		# a = features * x
-
+		
+		# --------------------------------------------------------------------------------
+		
 		# topk2 = topk1[indices]
 		# x = torch.zeros(features.shape).cuda()
 		# for i, idx in enumerate(topk2[:, :num2]):
 		#     x[i, idx] = 1
 		# b = features[indices] * x
-
-		ones = torch.ones(logits.shape).cuda()
-		zeros = torch.zeros(logits.shape).cuda()
-		maxx = torch.max(logits, 1).values.view(logits.shape[0], 1, 1, 1)
-		minn = torch.min(logits, 1).values.view(logits.shape[0], 1, 1, 1)
-		logits = (logits - minn) / (maxx - minn)
-		a = features * torch.where(logits >= r2, ones, zeros).expand_as(features)
-		b = features[indices] * torch.where(logits[indices] >= r1, ones, zeros).expand_as(features)
+		
+		# --------------------------------------------------------------------------------
+		
+		# ones = torch.ones(logits.shape).cuda()
+		# zeros = torch.zeros(logits.shape).cuda()
+		# maxx = torch.max(logits, 1).values.view(logits.shape[0], 1, 1, 1)
+		# minn = torch.min(logits, 1).values.view(logits.shape[0], 1, 1, 1)
+		# logits = (logits - minn) / (maxx - minn)
+		# a = features * torch.where(logits >= r2, ones, zeros).expand_as(features)
+		# b = features[indices] * torch.where(logits[indices] >= r1, ones, zeros).expand_as(features)
 
 		return a, b
 
@@ -261,19 +226,27 @@ class UNet(nn.Module):
 		# x = torch.cat([a.view(a.shape[0], -1), b.view(b.shape[0], -1), label], 1)
 		# x = self.fc(x).view(-1, a.shape[1], a.shape[2], a.shape[3])
 
-		# print(self.inc(a).shape) # [50, 32, 28, 28]
+		# a1, weights1 = self.inc(a)
+		# a1, b1 = self.clean(a1, weights1, indices, label)
+		# a2, weights2 = self.down1(a1)
+		# a2, b2 = self.clean(a2, weights2, indices, label)
+		# a3, weights3 = self.down2(a2)
+		# a3, b3 = self.clean(a3, weights3, indices, label)
+		# a4, weights4 = self.down3(a3)
+		# a4, b4 = self.clean(a4, weights4, indices, label)
+		# a5, weights5 = self.down4(a4)
+		# a5, b5 = self.clean(a5, weights5, indices, label)
+
 		a1 = self.inc(a)
-		# print(a1.shape)
-		# print(self.SEmodule1(a1).shape)
-		a1, b1 = self.clean(a1, self.SEmodule1(a1), indices, label)
+		a1, b1 = self.clean(a1, indices, label)
 		a2 = self.down1(a1)
-		a2, b2 = self.clean(a2, self.SEmodule2(a2), indices, label)
+		a2, b2 = self.clean(a2, indices, label)
 		a3 = self.down2(a2)
-		a3, b3 = self.clean(a3, self.SEmodule3(a3), indices, label)
+		a3, b3 = self.clean(a3, indices, label)
 		a4 = self.down3(a3)
-		a4, b4 = self.clean(a4, self.SEmodule4(a4), indices, label)
+		a4, b4 = self.clean(a4, indices, label)
 		a5 = self.down4(a4)
-		a5, b5 = self.clean(a5, self.SEmodule5(a5), indices, label)
+		a5, b5 = self.clean(a5, indices, label)
 
 		cated = self.merge5(torch.cat([a5, b5], 1))
 		u1 = self.up1(cated, self.merge4(torch.cat([a4, b4], 1)))

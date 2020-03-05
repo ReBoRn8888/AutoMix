@@ -257,3 +257,13 @@ def mAP_evaluation(PR_results, PR_labels, numClasses):
 	#     plot_PR(P, R, title = "P-R for class@ {} (AP = {:.4f})".format(i, AP))
 	mAP = np.mean(APList)
 	return mAP
+
+def min_max_norm(tensor):
+	mmin = torch.min(tensor)
+	mmax = torch.max(tensor)
+	tensor = (tensor - mmin) / (mmax - mmin)
+	return tensor
+
+def mean_std_norm(tensor, mean, std):
+	tensor = (tensor - mean / std)
+	return tensor
